@@ -1,12 +1,45 @@
 import argparse
 import torch
-from networks import FullyConnected, Conv
+from .networks import FullyConnected, Conv
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
 
 
 def analyze(net, inputs, eps, true_label):
+    """ 
+    
+    This function should run the DeepPoly relaxation on the L infinity 
+    ball of radius epsilon around the input and verify whether the net 
+    would always output the right label. 
+
+    [input +-eps] --> [y_true-label > y_i] for all i != true-label
+
+    Arguments
+    ---------
+    net: (nn.Module) - either instance of FullyConnected or Conv  
+    inputs: (FloatTensor) - shape (1, 1, 28, 28)
+    eps: (float) - noise level
+    true_label: (int) - label from 0 to 9  
+
+    Returns
+    --------
+    (bool) - True if the property is verified
+
+    """
+
+    # 1. Define the input box - the format should be defined by us 
+    # as it will be used by our propagation function. 
+
+    # 2. Propagate the region across the net 
+    # Notice: since the net is not known to this function (could be any of the 
+    # pre-defined networks) the propagation logic should not be encoded here. 
+    # Most sensible solution: implement the propagation logic 
+    # directly inside the networks' classes. 
+
+    # 3. Verify the property 
+
+
     return 0
 
 
@@ -49,6 +82,7 @@ def main():
     else:
         assert False
 
+    # here we are loading the pre-trained net weights 
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
 
     inputs = torch.FloatTensor(pixel_values).view(1, 1, INPUT_SIZE, INPUT_SIZE).to(DEVICE)
