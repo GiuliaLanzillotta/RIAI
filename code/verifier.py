@@ -20,7 +20,7 @@ def prepare_input_verifier(inputs, eps):
     """
     # inputs has shape (1,1,28,28)
     # hence also eps has the same shape
-    low = torch.max(inputs - eps, torch.tensor(0.0))
+    low = torch.max(inputs - eps, torch.tensor(0.0)) # may we should limit this to something very small instaed than 0?
     high = torch.min(inputs + eps, torch.tensor(1.0))
     return inputs, low, high
 

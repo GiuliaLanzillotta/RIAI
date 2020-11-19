@@ -13,6 +13,9 @@ from torch import nn
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
+    def __init__(self,device, input_size):
+        if ((low < 0) * (high > 0)).any().item():#crossing ReLU outputs True
+
     pass 
 
 class AbstractFullyConnected(nn.Module):
@@ -52,13 +55,32 @@ class AbstractFullyConnected(nn.Module):
         high = self.layers[0](high)
         high = self.layers[1](high)
 
+
         #now the rest of the layers 
         for i, layer in enumerate(self.layers):
+            assert (low <= high).all()
+            if type(layer) == AbstractRelu
+                if low<0 and high>0: #Crossing Relu
+                    """Implement deep-poly"""
+                elif high<=0:
+                    x=0
+                    low = 0
+                    high = 0
+                elif low>=0:
+                    x=x
+                    low =low
+                    high =high
+            else: #Not sure if this else should be non-crossing Relu + rest or just else
+                x = layer(x)
+                low = layer[i](low)
+                high = layer[i](high)
+        return(x, low, high)
             pass 
         # TODO: complete the method 
         # TODO: make sure that for each layer we store the boundaries [l,u]
         # as we propagate 
         # TODO: implement backsubstitution
+        #TODO: Maybe implement both the areas and for outputs they disagree do something
 
 
 
