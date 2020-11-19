@@ -6,36 +6,51 @@ DEVICE = 'cpu'
 INPUT_SIZE = 28
 
 
-def analyze(net, inputs, eps, true_label):
+def prepare_input_verifier(inputs, eps):
     """ 
+    This function computes the input to the verifier. 
+    Given an input image and a noise level it computes the range 
+    of values for every pixel. 
+    From the task description: 
+    'Note that images have pixel intensities between 0 and 1, 
+    e.g. if perturbation is 0.2 and pixel has value 0.9 then you only 
+    have to verify range [0.7, 1.0] for intensities of this pixel, 
+    instead of [0.7, 1.1]'
     
-    This function should run the DeepPoly relaxation on the L infinity 
-    ball of radius epsilon around the input and verify whether the net 
-    would always output the right label. 
+    """
+    # inputs has shape (1,1,28,28)
+    # hence also eps has the same shape
+    low = torch.max(inputs - eps, torch.tensor(0.0))
+    high = torch.min(inputs + eps, torch.tensor(1.0))
+    return inputs, low, high
 
-    [input +-eps] --> [y_true-label > y_i] for all i != true-label
+def analyze(net, inputs, eps, true_label):
+    """
+        This function should run the DeepPoly relaxation on the L infinity 
+        ball of radius epsilon around the input and verify whether the net 
+        would always output the right label. 
 
-    Arguments
-    ---------
-    net: (nn.Module) - either instance of FullyConnected or Conv  
-    inputs: (FloatTensor) - shape (1, 1, 28, 28)
-    eps: (float) - noise level
-    true_label: (int) - label from 0 to 9  
+        [input +-eps] --> [y_true-label > y_i] for all i != true-label
 
-    Returns
-    --------
-    (bool) - True if the property is verified
+        Arguments
+        ---------
+        net: (nn.Module) - either instance of AbstractFullyConnected or AbstractConv  
+        inputs: (FloatTensor) - shape (1, 1, 28, 28)
+        eps: (float) - noise level
+        true_label: (int) - label from 0 to 9  
 
+        Returns
+        --------
+        (bool) - True if the property is verified
     """
 
     # 1. Define the input box - the format should be defined by us 
     # as it will be used by our propagation function. 
+    inputs, low, high = prepare_input_verifier(inputs, eps)
+
 
     # 2. Propagate the region across the net 
-    # Notice: since the net is not known to this function (could be any of the 
-    # pre-defined networks) the propagation logic should not be encoded here. 
-    # Most sensible solution: implement the propagation logic 
-    # directly inside the networks' classes. 
+    
 
     # 3. Verify the property 
 
@@ -58,6 +73,8 @@ def main():
         true_label = int(lines[0])
         pixel_values = [float(line) for line in lines[1:]]
         eps = float(args.spec[:-4].split('/')[-1].split('_')[-1])
+
+    # TODO: create abstract net here 
 
     if args.net == 'fc1':
         net = FullyConnected(DEVICE, INPUT_SIZE, [50, 10]).to(DEVICE)
@@ -90,6 +107,7 @@ def main():
     pred_label = outs.max(dim=1)[1].item()
     assert pred_label == true_label
 
+    #TODO: pass the abstract net here 
     if analyze(net, inputs, eps, true_label):
         print('verified')
     else:

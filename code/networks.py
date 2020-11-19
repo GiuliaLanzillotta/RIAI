@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 
+# - abstract net 
+# FullyConnectedAbstract():
+#   - forward abstract 
+# 
 
 class Normalization(nn.Module):
 
@@ -29,7 +33,7 @@ class FullyConnected(nn.Module):
 
     def forward(self, x):
         return self.layers(x)
-
+    
 
 class Conv(nn.Module):
 
