@@ -11,12 +11,26 @@ This file mimics the structure of the networks.py file.
 from .networks import Normalization
 from torch import nn
 
+
+
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
     def __init__(self,device, input_size):
         #TODO: initialise lamdas here etc
-    def deepPoly:
-        #TODO: define deep poly bounds
+
+    def backsub(self):
+        return x
+
+    def deepPoly(self,x, high, low, lamda=0):
+        x = backsub()
+        ub_slope = high/(high-low+1e-6) #upper bound slope with capacity to have high=low=0
+        ub_int = (low*high)/(high-low) #intercept of upper bound line
+        high = ub_slope*x-ub_int #upper bound from ReLu
+        lb_slope = lamda #lower bound line slope
+        low = lb_slope*x #lower bound line of ReLu with x coming from backsub
+        x = Relu(x) #TODO:correct from pseudocode version
+        return (high, low)
+        #TODO: NOTE due to timeout do not backsub unless property not proven i.e. low(i)<u(j)<u(i) we want low(i)>u(j)
     def forward(self, x, low, high):
         assert(low <= high).all()
         if ((low < 0) * (high > 0)).any().item():#crossing ReLU outputs True
@@ -68,6 +82,7 @@ class AbstractFullyConnected(nn.Module):
         low = self.layers[1](low)
         high = self.layers[0](high)
         high = self.layers[1](high)
+        #TODO: I believe this is wrong but needs confirming. See slide 23 when affine layer is negative weight max is u-l not u-u
 
 
         #now the rest of the layers 
