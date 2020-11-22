@@ -14,8 +14,22 @@ from torch import nn
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
     def __init__(self,device, input_size):
+        #TODO: initialise lamdas here etc
+    def deepPoly:
+        #TODO: define deep poly bounds
+    def forward(self, x, low, high):
+        assert(low <= high).all()
         if ((low < 0) * (high > 0)).any().item():#crossing ReLU outputs True
-
+            '''implement forward version of the DeepPoly'''
+        elif high <= 0:
+            x = 0
+            low = 0
+            high = 0
+        elif low >= 0:
+            x = x
+            low = low
+            high = high
+        return (x, low, high)
     pass 
 
 class AbstractFullyConnected(nn.Module):
@@ -58,19 +72,9 @@ class AbstractFullyConnected(nn.Module):
 
         #now the rest of the layers 
         for i, layer in enumerate(self.layers):
-            assert (low <= high).all()
             if type(layer) == AbstractRelu
-                if low<0 and high>0: #Crossing Relu
-                    """Implement deep-poly"""
-                elif high<=0:
-                    x=0
-                    low = 0
-                    high = 0
-                elif low>=0:
-                    x=x
-                    low =low
-                    high =high
-            else: #Not sure if this else should be non-crossing Relu + rest or just else
+                x, low, high = AbstractRelu.forward(self, x, low, high)
+            else:
                 x = layer(x)
                 low = layer[i](low)
                 high = layer[i](high)
