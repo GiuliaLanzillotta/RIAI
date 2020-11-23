@@ -1,11 +1,6 @@
 import torch
 import torch.nn as nn
 
-# - abstract net 
-# FullyConnectedAbstract():
-#   - forward abstract 
-# 
-
 class Normalization(nn.Module):
 
     def __init__(self, device):
