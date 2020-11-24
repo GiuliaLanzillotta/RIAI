@@ -57,7 +57,7 @@ class AbstractLinear(nn.Module):
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
-    def __init__(self,device, input_size):
+    def __init__(self):
         #TODO: initialise lamdas here etc
         pass
 
