@@ -1,6 +1,8 @@
 import argparse
 import torch
-from .networks import FullyConnected, Conv
+import time
+from networks import FullyConnected, Conv
+from abstract_nets import AbstractFullyConnected, AbstractConv
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
@@ -43,17 +45,29 @@ def analyze(net, inputs, eps, true_label):
         --------
         (bool) - True if the property is verified
     """
-
+    start = time.time()
     # 1. Define the input box - the format should be defined by us 
     # as it will be used by our propagation function. 
     inputs, low, high = prepare_input_verifier(inputs, eps)
-
-
     # 2. Propagate the region across the net 
-    
-
+    outputs, low, high = net(inputs, low, high)
     # 3. Verify the property 
-
+    # in order to always predict the right label in this perturbation 
+    # zone the logits for the right label need to always be 
+    # higher than the logits for all the other labels
+    verified = sum((low[true_label]>high).int())==9
+    end = time.time()
+    print("Time to propagate: "+str(round(end-start)))
+    if verified: return 1
+    #4. Backsubstitute if the property is not verified, 
+    # otherwise return 
+    backsub_order = None
+    low, high = net.back_sub(inputs, low, high, true_label = true_label, order=backsub_order)
+    # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+    verified = low.numpy().all()>0
+    end = time.time()
+    print("Time to backsubstitute: "+str(round(end-start)))
+    if verified: return 1
 
     return 0
 
@@ -78,24 +92,34 @@ def main():
 
     if args.net == 'fc1':
         net = FullyConnected(DEVICE, INPUT_SIZE, [50, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [50, 10]).to(DEVICE)
     elif args.net == 'fc2':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 50, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [100, 50, 10]).to(DEVICE)
     elif args.net == 'fc3':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 100, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [100, 100, 10]).to(DEVICE)
     elif args.net == 'fc4':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 100, 50, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [100, 100, 50, 10]).to(DEVICE)
     elif args.net == 'fc5':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 100, 100, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [100, 100, 100, 10]).to(DEVICE)
     elif args.net == 'fc6':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 100, 100, 100, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE, [100, 100, 100, 100, 10]).to(DEVICE)
     elif args.net == 'fc7':
         net = FullyConnected(DEVICE, INPUT_SIZE, [100, 100, 100, 100, 100, 10]).to(DEVICE)
+        abstract_net = AbstractFullyConnected(DEVICE, INPUT_SIZE,[100, 100, 100, 100, 100, 10]).to(DEVICE)
     elif args.net == 'conv1':
         net = Conv(DEVICE, INPUT_SIZE, [(16, 3, 2, 1)], [100, 10], 10).to(DEVICE)
+        abstract_net = AbstractConv(DEVICE, INPUT_SIZE, [(16, 3, 2, 1)], [100, 10], 10).to(DEVICE)
     elif args.net == 'conv2':
         net = Conv(DEVICE, INPUT_SIZE, [(16, 4, 2, 1), (32, 4, 2, 1)], [100, 10], 10).to(DEVICE)
+        abstract_net = AbstractConv(DEVICE, INPUT_SIZE, [(16, 4, 2, 1), (32, 4, 2, 1)], [100, 10], 10).to(DEVICE)
     elif args.net == 'conv3':
         net = Conv(DEVICE, INPUT_SIZE, [(16, 4, 2, 1), (64, 4, 2, 1)], [100, 100, 10], 10).to(DEVICE)
+        abstract_net = AbstractConv(DEVICE, INPUT_SIZE, [(16, 4, 2, 1), (64, 4, 2, 1)], [100, 100, 10], 10).to(DEVICE)
     else:
         assert False
 
@@ -107,8 +131,7 @@ def main():
     pred_label = outs.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    #TODO: pass the abstract net here 
-    if analyze(net, inputs, eps, true_label):
+    if analyze(abstract_net, inputs, eps, true_label):
         print('verified')
     else:
         print('not verified')
