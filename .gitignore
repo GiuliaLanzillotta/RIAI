@@ -2,3 +2,5 @@ mnist_nets/
 test_cases/
 .vscode/
 .ipynb_checkpoints/
+*.pyc  
+.idea/
