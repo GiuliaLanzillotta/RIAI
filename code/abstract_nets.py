@@ -163,8 +163,8 @@ class AbstractFullyConnected(nn.Module):
         # First, we insert the affine layer corresponding to the substractions
         # employed by the verifier to check the correctness of the prediction
         # output_j = logit_i - logit_j, where i is the true_label
-        W_substract = torch.eye(num_classes - 1, num_classes) * (-1)
-        W_substract[true_label] = 1
+        W_substract = torch.eye(num_classes-1, num_classes) * (-1)
+        W_substract[:,true_label] = 1
         # now cumulating the last operation
         W_low = W_substract
         W_high = W_substract
