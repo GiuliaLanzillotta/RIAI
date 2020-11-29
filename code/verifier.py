@@ -22,7 +22,7 @@ def prepare_input_verifier(inputs, eps):
     """
     # inputs has shape (1,1,28,28)
     # hence also eps has the same shape
-    low = torch.max(inputs - eps, torch.tensor(0.0)) # may we should limit this to something very small instaed than 0?
+    low = torch.max(inputs - eps, torch.tensor(0.0)) # may we should limit this to something very small instead than 0?
     high = torch.min(inputs + eps, torch.tensor(1.0))
     return inputs, low, high
 
@@ -66,7 +66,8 @@ def analyze(net, inputs, eps, true_label):
     with torch.no_grad():
         low, high = net.back_sub(inputs, low, high, true_label = true_label, order=backsub_order)
     # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-    verified = low.detach().numpy().all()>0
+    #verified = low.detach().numpy().all()>0
+    verified = sum((low[true_label] > high).int()) == 9
     end = time.time()
     print("Time to backsubstitute: "+str(round(end-start,3)))
     if verified: return 1

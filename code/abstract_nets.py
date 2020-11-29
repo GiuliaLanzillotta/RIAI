@@ -32,8 +32,8 @@ class AbstractLinear(nn.Module):
         for i, w in enumerate(weights): 
             # now w is a vector of size [in]
             # determine the swapping factor 
-            mask_neg = (w<0).int()
-            mask_pos = (w>=0).int()
+            mask_neg = (w<0-1.e-7).int()
+            mask_pos = (w>=0+1.e-7).int()
             low_input = mask_neg*high + mask_pos*low
             high_input = mask_pos*high + mask_neg*low
             # ready to make the forward pass 
@@ -65,8 +65,8 @@ class AbstractRelu(nn.Module):
 
     def deepPoly(self, x, high, low):
         # compute the upper bound slope and intercept
-        ub_slope = high/(high-low+1e-6) #upper bound slope with capacity to have high=low=0
-        ub_int = (low*high)/(high-low) #intercept of upper bound line
+        ub_slope = high/(high-low+(1.e-7)) #upper bound slope with capacity to have high=low=0
+        ub_int = -(low*high)/(high-low) #intercept of upper bound line
         # save weight and biases for lower and upper bounds 
         input_size = x.size()[1]
         self.weight_low = torch.eye(input_size,input_size)*self.lamda
@@ -157,18 +157,22 @@ class AbstractFullyConnected(nn.Module):
         x = self.activations[-order]
 
         num_classes = 10 # we will start from the output
-        bias_high = torch.zeros(num_classes-1)
-        bias_low = torch.zeros(num_classes-1)
+        # bias_high = torch.zeros(num_classes-1)
+        # bias_low = torch.zeros(num_classes-1)
+        bias_high = torch.zeros(num_classes)
+        bias_low = torch.zeros(num_classes)
+
 
         # First, we insert the affine layer corresponding to the substractions
         # employed by the verifier to check the correctness of the prediction
         # output_j = logit_i - logit_j, where i is the true_label
-        W_substract = torch.eye(num_classes-1, num_classes) * (-1)
-        W_substract[:,true_label] = 1
+        #W_substract = torch.eye(num_classes-1, num_classes) * (-1)
+        #W_substract[:,true_label] = 1
         # now cumulating the last operation
-        W_low = W_substract
-        W_high = W_substract
-
+        # W_low = W_substract
+        # W_high = W_substract
+        W_low = torch.eye(num_classes)
+        W_high = torch.eye(num_classes)
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
             if type(layer) == AbstractLinear: 
                 W_prime_high = layer.layer.weight 
@@ -182,7 +186,6 @@ class AbstractFullyConnected(nn.Module):
                 b_prime_high = layer.bias_high
             else: 
                 raise Exception("Unknown layer in the forward pass ")
-
             bias_high += torch.matmul(W_high, b_prime_high)
             W_high = torch.matmul(W_high, W_prime_high)
             bias_low += torch.matmul(W_low, b_prime_low)
@@ -193,7 +196,6 @@ class AbstractFullyConnected(nn.Module):
         # note: no bias here (all the biases were already included in W)
         low_out, _ = AbstractLinear.forward_boxes(W_low, bias_low, low, high)
         _, high_out = AbstractLinear.forward_boxes(W_high, bias_high, low, high)
-
 
         return low_out,high_out
 
