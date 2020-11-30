@@ -32,8 +32,8 @@ class AbstractLinear(nn.Module):
         for i, w in enumerate(weights): 
             # now w is a vector of size [in]
             # determine the swapping factor 
-            mask_neg = (w<0-1.e-7).int()
-            mask_pos = (w>=0+1.e-7).int()
+            mask_neg = (w<0).int()
+            mask_pos = (w>=0).int()
             low_input = mask_neg*high + mask_pos*low
             high_input = mask_pos*high + mask_neg*low
             # ready to make the forward pass 
@@ -63,31 +63,41 @@ class AbstractRelu(nn.Module):
         self.lamda = lamda
         self.relu = nn.ReLU()
 
-    def deepPoly(self, x, high, low):
+    def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
         ub_slope = high/(high-low+(1.e-7)) #upper bound slope with capacity to have high=low=0
         ub_int = -(low*high)/(high-low) #intercept of upper bound line
-        # save weight and biases for lower and upper bounds 
-        input_size = x.size()[1]
-        self.weight_low = torch.eye(input_size,input_size)*self.lamda
-        self.bias_low = torch.zeros(input_size)
-        self.weight_high = torch.eye(input_size,input_size)*ub_slope
-        self.bias_high = ub_int
+        # save weight and biases for lower and upper bounds
+        self.weight_high[i,i] = ub_slope
+        self.bias_high[i] = ub_int
         # compute lower and upper bounds 
-        high = torch.matmul(self.weight_high,high) + self.bias_high
-        low = torch.matmul(self.weight_low,low) + self.bias_low
-        x = self.relu(x)
-        return x, high, low
-        #TODO: NOTE due to timeout do not backsub unless property not proven i.e. low(i)<u(j)<u(i) we want low(i)>u(j)
-    
+        high = self.weight_high[i,i]*high + self.bias_high[i]
+        low = self.weight_low[i,i]*low + self.bias_low[i]
+
+        return high, low
+
     def forward(self, x, low, high):
-        if ((low < 0) * (high > 0)).any().item(): #crossing ReLU outputs True
-            '''implement forward version of the DeepPoly'''
-            x, high, low = self.deepPoly(x,high,low)
-        elif high <= 0: x, low, high  = 0, 0, 0
-        # note: if low >=0 we have not done anything, 
-        # so we can just return the input! 
-        return x, low, high
+
+        input_size = x.size()[0]
+
+        # Initialise the matrices
+        self.weight_low = torch.eye(input_size, input_size) * self.lamda
+        self.bias_low = torch.zeros(input_size)
+        self.weight_high = torch.eye(input_size, input_size)
+        self.bias_high = torch.zeros(input_size)
+        # Build the output
+        x_out = self.relu(x)
+        low_out = low.clone()
+        high_out = high.clone()
+        for i in range(input_size):
+            if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
+                '''implement forward version of the DeepPoly'''
+                high_out[i], low_out[i] = self.deepPoly(high[i], low[i], i)
+            elif high[i] <= 0:
+                high_out[i], low_out[i]  = 0, 0
+            # note: if low >=0 we have not done anything,
+            # so we can just return the input!
+        return x_out, low_out, high_out
 
      
 
@@ -111,6 +121,13 @@ class AbstractFullyConnected(nn.Module):
         self.activations = []
     
 
+    def load_weights(self, net):
+        for i, layer in enumerate(net.layers):
+            if type(layer) == nn.Linear:
+                self.layers[i].layer.weight = layer.weight
+                self.layers[i].layer.bias = layer.bias
+
+
     def forward(self, x, low, high):
         """
         Propagation of abstract area through the network. 
@@ -123,13 +140,13 @@ class AbstractFullyConnected(nn.Module):
         """
         # propagate normally through the first two layers 
         x = self.layers[0](x) # normalization 
-        x = self.layers[1](x) # flattening 
+        x = self.layers[1](x).squeeze() # flattening and removing extra dimension
         # we can safely pass the perturbation boundaries through 
         # normalization and flattening (affine transformation is exact)
         low = self.layers[0](low)
-        low = self.layers[1](low)
+        low = self.layers[1](low).squeeze()
         high = self.layers[0](high)
-        high = self.layers[1](high)
+        high = self.layers[1](high).squeeze()
         
         self.lows+=[low]
         self.highs+=[high]
@@ -138,7 +155,7 @@ class AbstractFullyConnected(nn.Module):
         for i, layer in enumerate(self.layers):
             if i in [0,1]: continue # skipping the ones we already computed 
             # no need to distinguish btw layers as they have same signature now
-            x, low, high = layer(x, low, high)    
+            x, low, high = layer(x, low, high)
             self.lows+=[low]
             self.highs+=[high]
             self.activations+=[x]
@@ -146,7 +163,7 @@ class AbstractFullyConnected(nn.Module):
         return x, low, high
 
     
-    def back_sub(self, x, low, high, true_label, order=None):
+    def back_sub(self, true_label, order=None):
         """ Implements backsubstitution 
         true_label (int): index (0 to 9) of the right label - used in the last step of backsubstitution
         order (int): defines number of layers to backsubstitute starting from the output.  
@@ -154,25 +171,26 @@ class AbstractFullyConnected(nn.Module):
         if order is None: order = len(self.activations) # example: 10 layers, 9 actual lows and highs, 1 for the input, 8 for the rest of the layers
         low = self.lows[-order]
         high = self.highs[-order]
-        x = self.activations[-order]
 
         num_classes = 10 # we will start from the output
-        # bias_high = torch.zeros(num_classes-1)
-        # bias_low = torch.zeros(num_classes-1)
-        bias_high = torch.zeros(num_classes)
-        bias_low = torch.zeros(num_classes)
+        bias_high = torch.zeros(num_classes-1)
+        bias_low = torch.zeros(num_classes-1)
+        #bias_high = torch.zeros(num_classes)
+        #bias_low = torch.zeros(num_classes)
 
 
         # First, we insert the affine layer corresponding to the substractions
         # employed by the verifier to check the correctness of the prediction
         # output_j = logit_i - logit_j, where i is the true_label
-        #W_substract = torch.eye(num_classes-1, num_classes) * (-1)
-        #W_substract[:,true_label] = 1
+        W_substract = torch.eye(num_classes-1, num_classes-1)*(-1)
+        W_substract = torch.cat([W_substract[:, 0:true_label],
+                                 torch.ones(num_classes-1, 1),
+                                 W_substract[:, true_label:num_classes]], 1) # inserting the column of ones for the true label
         # now cumulating the last operation
-        # W_low = W_substract
-        # W_high = W_substract
-        W_low = torch.eye(num_classes)
-        W_high = torch.eye(num_classes)
+        W_low = W_substract.clone()
+        W_high = W_substract.clone()
+        #W_low = torch.eye(num_classes)
+        #W_high = torch.eye(num_classes)
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
             if type(layer) == AbstractLinear: 
                 W_prime_high = layer.layer.weight 
@@ -197,7 +215,7 @@ class AbstractFullyConnected(nn.Module):
         low_out, _ = AbstractLinear.forward_boxes(W_low, bias_low, low, high)
         _, high_out = AbstractLinear.forward_boxes(W_high, bias_high, low, high)
 
-        return low_out,high_out
+        return low_out, high_out
 
 
         

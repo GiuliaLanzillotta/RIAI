@@ -64,10 +64,10 @@ def analyze(net, inputs, eps, true_label):
     # otherwise return 
     backsub_order = None
     with torch.no_grad():
-        low, high = net.back_sub(inputs, low, high, true_label = true_label, order=backsub_order)
+        low, high = net.back_sub(true_label = true_label, order=backsub_order)
     # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-    #verified = low.detach().numpy().all()>0
-    verified = sum((low[true_label] > high).int()) == 9
+    verified = low.detach().numpy().all()>0
+    #verified = sum((low[true_label] > high).int()) == 9
     end = time.time()
     print("Time to backsubstitute: "+str(round(end-start,3)))
     if verified: return 1
@@ -128,7 +128,9 @@ def main():
 
     # here we are loading the pre-trained net weights 
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
+    abstract_net.load_weights(net)
 
+    abstract_net.requires_grad = False
     inputs = torch.FloatTensor(pixel_values).view(1, 1, INPUT_SIZE, INPUT_SIZE).to(DEVICE)
     outs = net(inputs)
     pred_label = outs.max(dim=1)[1].item()
