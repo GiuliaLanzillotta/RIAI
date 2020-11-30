@@ -58,45 +58,50 @@ class AbstractLinear(nn.Module):
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
-    def __init__(self, lamda=0):
+    def __init__(self, lamda=0.0):
         super().__init__()
         self.lamda = lamda
         self.relu = nn.ReLU()
 
     def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
-        ub_slope = high/(high-low+(1.e-7)) #upper bound slope with capacity to have high=low=0
+        ub_slope = high/(high-low) #upper bound slope with capacity to have high=low=0
         ub_int = -(low*high)/(high-low) #intercept of upper bound line
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        # compute lower and upper bounds 
-        high = self.weight_high[i,i]*high + self.bias_high[i]
-        low = self.weight_low[i,i]*low + self.bias_low[i]
-
-        return high, low
+        self.weight_low[i, i] = self.lamda
 
     def forward(self, x, low, high):
 
         input_size = x.size()[0]
 
         # Initialise the matrices
-        self.weight_low = torch.eye(input_size, input_size) * self.lamda
+        self.weight_low = torch.eye(input_size, input_size)
         self.bias_low = torch.zeros(input_size)
         self.weight_high = torch.eye(input_size, input_size)
         self.bias_high = torch.zeros(input_size)
-        # Build the output
-        x_out = self.relu(x)
-        low_out = low.clone()
-        high_out = high.clone()
+
+        print(input_size)
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
-                high_out[i], low_out[i] = self.deepPoly(high[i], low[i], i)
+                self.deepPoly(high[i], low[i], i) # modify weights
             elif high[i] <= 0:
-                high_out[i], low_out[i]  = 0, 0
+                self.weight_high[i, i] = 0
+                self.weight_low[i, i] = 0
+            else:
+                pass
             # note: if low >=0 we have not done anything,
             # so we can just return the input!
+        # compute lower and upper bounds
+        # Build the output
+        print(self.weight_high)
+        print(self.weight_low)
+        x_out = self.relu(x)
+        high_out = torch.matmul(self.weight_high,high) + self.bias_high
+        low_out = torch.matmul(self.weight_low,low) + self.bias_low
+
         return x_out, low_out, high_out
 
      
@@ -105,15 +110,13 @@ class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
     def __init__(self, device, input_size, fc_layers):
         super().__init__()
-        # TODO: make sure that normalisation is not 
-        # affecting the verification 
         layers = [Normalization(device), 
                     nn.Flatten()]
         prev_fc_size = input_size * input_size
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(lamda=0)]
+                layers += [AbstractRelu(lamda=0.0)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
         self.lows = []
@@ -147,7 +150,8 @@ class AbstractFullyConnected(nn.Module):
         low = self.layers[1](low).squeeze()
         high = self.layers[0](high)
         high = self.layers[1](high).squeeze()
-        
+
+
         self.lows+=[low]
         self.highs+=[high]
         self.activations+=[x]
@@ -171,6 +175,7 @@ class AbstractFullyConnected(nn.Module):
         if order is None: order = len(self.activations) # example: 10 layers, 9 actual lows and highs, 1 for the input, 8 for the rest of the layers
         low = self.lows[-order]
         high = self.highs[-order]
+
 
         num_classes = 10 # we will start from the output
         bias_high = torch.zeros(num_classes-1)
