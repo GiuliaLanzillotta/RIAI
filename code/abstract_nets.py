@@ -104,7 +104,11 @@ class AbstractRelu(nn.Module):
 
         return x_out, low_out, high_out
 
-     
+class AbstractReluConv(nn.Module):
+    def __init__(self, lamda=0.0):
+        super().__init__()
+        self.lamda = lamda
+        self.relu = nn.ReLU()
 
 class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
@@ -223,10 +227,109 @@ class AbstractFullyConnected(nn.Module):
         return low_out, high_out
 
 
-        
+class AbstractConvLayer(nn.Module):
+    def __init__(self, prev_channels, n_channels, kernel_size, stride, padding):
+        super().__init__()
+        self.layer = nn.Conv2d(prev_channels, n_channels, kernel_size, stride, padding)
 
+        self.prev_channels = prev_channels
+        self.n_channels = n_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+
+    @staticmethod
+    def forward_image_boxes(low, high, weight, biases):
+        low = low.squeeze()
+        high = high.squeeze()
+        weight = weight.view(weight.size(0), -1).t()
+        mask_neg = (weight < 0).int()
+        mask_pos = (weight < 0).int()
+        weight_neg = torch.multiply(mask_neg, weight).t()
+        weight_pos = torch.multiply(mask_pos, weight).t()
+        low_out = (torch.matmul(high,weight_neg)+torch.matmul(low, weight_pos) + biases).t()
+        high_out = (torch.matmul(low, weight_neg) + torch.matmul(high, weight_pos) +biases).t()
+
+        # quick check here
+        assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
+        return low_out, high_out
+
+    def forward(self, x, low, high):
+        w = self.layer.weight
+        b = self.layer.bias
+        # Handmade conv
+        low = torch.nn.functional.unfold(low, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
+        high = torch.nn.functional.unfold(high, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
+        low, high = self.forward_image_boxes(low, high, w, b)
+        x = self.layer(x)
+        low = low.view(x.size)
+        high = high.view(x.size)
+
+        return x, low, high
 
 
 class AbstractConv(nn.Module):
-    """ Abstract version of convolutional model """ 
-    pass 
+    """ Abstract version of convolutional model """
+
+    def init(self, device, input_size, conv_layers, fc_layers, n_class=10):
+        super(AbstractConv, self).init()
+        self.lows = []
+        self.highs = []
+        self.activations = []
+
+        self.input_size = input_size
+        self.n_class = n_class
+
+        layers = [Normalization(device)]
+        prev_channels = 1
+        img_dim = input_size
+
+        for n_channels, kernel_size, stride, padding in conv_layers:
+            layers += [
+                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
+                AbstractReluConv(device, kernel_size),
+            ]
+            prev_channels = n_channels
+            img_dim = img_dim // stride
+        layers += [nn.Flatten()]
+
+        prev_fc_size = prev_channels * img_dim * img_dim
+        for i, fc_size in enumerate(fc_layers):
+            layers += [AbstractLinear(prev_fc_size, fc_size)]
+            if i + 1 < len(fc_layers):
+                layers += [AbstractRelu(device, fc_size)]
+            prev_fc_size = fc_size
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, x, low, high):
+        """
+        Propagation of abstract area through the network.
+        Parameters:
+        - x: input
+        - low: lower bound on input perturbation (epsilon)
+        - high: upper bound on //   //
+        note: all the input tensors have shape (1,1,28,28)
+
+        """
+        # propagate normally through the first two layers
+        x = self.layers[0](x)  # normalization
+        low = self.layers[0](low)
+        high = self.layers[0](high)
+        self.lows += [low]
+        self.highs += [high]
+        self.activations += [x]
+        # now the rest of the layers
+        for i, layer in enumerate(self.layers):
+            if i in [0]: continue  # skipping the ones we already computed
+            # no need to distinguish btw layers as they have same signature now
+            if type(layer) == nn.Flatten:
+                x = layer(x).squeeze()
+                low = layer(low).squeeze()
+                high = layer(high).squeeze()
+                continue
+            x, low, high = layer(x, low, high)
+            self.lows += [low]
+            self.highs += [high]
+            self.activations += [x]
+
+        return x, low, high
