@@ -96,8 +96,6 @@ class AbstractRelu(nn.Module):
             # so we can just return the input!
         # compute lower and upper bounds
         # Build the output
-        print(self.weight_high)
-        print(self.weight_low)
         x_out = self.relu(x)
         high_out = torch.matmul(self.weight_high,high) + self.bias_high
         low_out = torch.matmul(self.weight_low,low) + self.bias_low
@@ -223,10 +221,7 @@ class AbstractFullyConnected(nn.Module):
         return low_out, high_out
 
 
-        
-
 
 
 class AbstractConv(nn.Module):
     """ Abstract version of convolutional model """ 
-    pass 
