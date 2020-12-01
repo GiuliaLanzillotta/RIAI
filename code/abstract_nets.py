@@ -82,7 +82,6 @@ class AbstractRelu(nn.Module):
         self.weight_high = torch.eye(input_size, input_size)
         self.bias_high = torch.zeros(input_size)
 
-        print(input_size)
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
@@ -96,19 +95,12 @@ class AbstractRelu(nn.Module):
             # so we can just return the input!
         # compute lower and upper bounds
         # Build the output
-        print(self.weight_high)
-        print(self.weight_low)
         x_out = self.relu(x)
         high_out = torch.matmul(self.weight_high,high) + self.bias_high
         low_out = torch.matmul(self.weight_low,low) + self.bias_low
 
         return x_out, low_out, high_out
 
-class AbstractReluConv(nn.Module):
-    def __init__(self, lamda=0.0):
-        super().__init__()
-        self.lamda = lamda
-        self.relu = nn.ReLU()
 
 class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
@@ -245,8 +237,8 @@ class AbstractConvLayer(nn.Module):
         weight = weight.view(weight.size(0), -1).t()
         mask_neg = (weight < 0).int()
         mask_pos = (weight < 0).int()
-        weight_neg = torch.multiply(mask_neg, weight).t()
-        weight_pos = torch.multiply(mask_pos, weight).t()
+        weight_neg = torch.multiply(mask_neg, weight)
+        weight_pos = torch.multiply(mask_pos, weight)
         low_out = (torch.matmul(high,weight_neg)+torch.matmul(low, weight_pos) + biases).t()
         high_out = (torch.matmul(low, weight_neg) + torch.matmul(high, weight_pos) +biases).t()
 
@@ -262,17 +254,65 @@ class AbstractConvLayer(nn.Module):
         high = torch.nn.functional.unfold(high, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
         low, high = self.forward_image_boxes(low, high, w, b)
         x = self.layer(x)
-        low = low.view(x.size)
-        high = high.view(x.size)
+        low = low.view(x.size())
+        high = high.view(x.size())
 
         return x, low, high
+
+class AbstractReluConv(nn.Module):
+
+    def __init__(self, lamda=0.0):
+        super().__init__()
+        self.lamda = lamda
+        self.relu = nn.ReLU()
+
+    def deepPoly(self, high, low, i):
+        # compute the upper bound slope and intercept
+        ub_slope = high/(high-low) #upper bound slope with capacity to have high=low=0
+        ub_int = -(low*high)/(high-low) #intercept of upper bound line
+        # save weight and biases for lower and upper bounds
+        self.weight_high[i,i] = ub_slope
+        self.bias_high[i] = ub_int
+        self.weight_low[i, i] = self.lamda
+
+    def forward(self, x, low, high):
+        flatten_x = x.view(-1,1)
+        input_size = flatten_x.size()[0]
+        low = low.reshape(-1,1)
+        high = high.reshape(-1,1)
+
+        # Initialise the matrices
+        self.weight_low = torch.eye(input_size, input_size)
+        self.bias_low = torch.zeros(input_size)
+        self.weight_high = torch.eye(input_size, input_size)
+        self.bias_high = torch.zeros(input_size)
+
+        for i in range(input_size):
+            if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
+                '''implement forward version of the DeepPoly'''
+                self.deepPoly(high[i], low[i], i) # modify weights
+            elif high[i] <= 0:
+                self.weight_high[i, i] = 0
+                self.weight_low[i, i] = 0
+            else:
+                pass
+            # note: if low >=0 we have not done anything,
+            # so we can just return the input!
+        # compute lower and upper bounds
+        # Build the output
+
+        x_out = self.relu(flatten_x).view(x.size())
+        high_out = (torch.matmul(self.weight_high,high.squeeze()) + self.bias_high).view(x.size())
+        low_out = (torch.matmul(self.weight_low,low.squeeze()) + self.bias_low).view(x.size())
+
+        return x_out, low_out, high_out
 
 
 class AbstractConv(nn.Module):
     """ Abstract version of convolutional model """
 
-    def init(self, device, input_size, conv_layers, fc_layers, n_class=10):
-        super(AbstractConv, self).init()
+    def __init__(self, device, input_size, conv_layers, fc_layers, n_class=10):
+        super().__init__()
         self.lows = []
         self.highs = []
         self.activations = []
@@ -287,7 +327,7 @@ class AbstractConv(nn.Module):
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
                 AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
-                AbstractReluConv(device, kernel_size),
+                AbstractReluConv(lamda=0.0),
             ]
             prev_channels = n_channels
             img_dim = img_dim // stride
@@ -297,9 +337,15 @@ class AbstractConv(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(device, fc_size)]
+                layers += [AbstractRelu(lamda=0.0)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
+
+    def load_weights(self, net):
+        for i, layer in enumerate(net.layers):
+            if type(layer) in [nn.Conv2d, nn.Linear]:
+                self.layers[i].layer.weight = layer.weight
+                self.layers[i].layer.bias = layer.bias
 
     def forward(self, x, low, high):
         """
