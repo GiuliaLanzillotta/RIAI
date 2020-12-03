@@ -82,7 +82,6 @@ class AbstractRelu(nn.Module):
         self.weight_high = torch.eye(input_size, input_size)
         self.bias_high = torch.zeros(input_size)
 
-        print(input_size)
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
@@ -102,7 +101,6 @@ class AbstractRelu(nn.Module):
 
         return x_out, low_out, high_out
 
-     
 
 class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
@@ -221,7 +219,163 @@ class AbstractFullyConnected(nn.Module):
         return low_out, high_out
 
 
+class AbstractConvLayer(nn.Module):
+    def __init__(self, prev_channels, n_channels, kernel_size, stride, padding):
+        super().__init__()
+        self.layer = nn.Conv2d(prev_channels, n_channels, kernel_size, stride, padding)
+
+        self.prev_channels = prev_channels
+        self.n_channels = n_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+
+    @staticmethod
+    def forward_image_boxes(low, high, weight, biases):
+        low = low.squeeze()
+        high = high.squeeze()
+        weight = weight.view(weight.size(0), -1).t()
+        mask_neg = (weight < 0).int()
+        mask_pos = (weight < 0).int()
+        weight_neg = torch.multiply(mask_neg, weight)
+        weight_pos = torch.multiply(mask_pos, weight)
+        low_out = (torch.matmul(high,weight_neg)+torch.matmul(low, weight_pos) + biases).t()
+        high_out = (torch.matmul(low, weight_neg) + torch.matmul(high, weight_pos) +biases).t()
+
+        # quick check here
+        assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
+        return low_out, high_out
+
+    def forward(self, x, low, high):
+        w = self.layer.weight
+        b = self.layer.bias
+        # Handmade conv
+        low = torch.nn.functional.unfold(low, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
+        high = torch.nn.functional.unfold(high, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
+        low, high = self.forward_image_boxes(low, high, w, b)
+        x = self.layer(x)
+        low = low.view(x.size())
+        high = high.view(x.size())
+
+        return x, low, high
+
+class AbstractReluConv(nn.Module):
+
+    def __init__(self, lamda=0.0):
+        super().__init__()
+        self.lamda = lamda
+        self.relu = nn.ReLU()
+
+    def deepPoly(self, high, low, i):
+        # compute the upper bound slope and intercept
+        ub_slope = high/(high-low) #upper bound slope with capacity to have high=low=0
+        ub_int = -(low*high)/(high-low) #intercept of upper bound line
+        # save weight and biases for lower and upper bounds
+        self.weight_high[i,i] = ub_slope
+        self.bias_high[i] = ub_int
+        self.weight_low[i, i] = self.lamda
+
+    def forward(self, x, low, high):
+        flatten_x = x.view(-1,1)
+        input_size = flatten_x.size()[0]
+        low = low.reshape(-1,1)
+        high = high.reshape(-1,1)
+
+        # Initialise the matrices
+        self.weight_low = torch.eye(input_size, input_size)
+        self.bias_low = torch.zeros(input_size)
+        self.weight_high = torch.eye(input_size, input_size)
+        self.bias_high = torch.zeros(input_size)
+
+        for i in range(input_size):
+            if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
+                '''implement forward version of the DeepPoly'''
+                self.deepPoly(high[i], low[i], i) # modify weights
+            elif high[i] <= 0:
+                self.weight_high[i, i] = 0
+                self.weight_low[i, i] = 0
+            else:
+                pass
+            # note: if low >=0 we have not done anything,
+            # so we can just return the input!
+        # compute lower and upper bounds
+        # Build the output
+
+        x_out = self.relu(flatten_x).view(x.size())
+        high_out = (torch.matmul(self.weight_high,high.squeeze()) + self.bias_high).view(x.size())
+        low_out = (torch.matmul(self.weight_low,low.squeeze()) + self.bias_low).view(x.size())
+
+        return x_out, low_out, high_out
 
 
 class AbstractConv(nn.Module):
-    """ Abstract version of convolutional model """ 
+    """ Abstract version of convolutional model """
+
+    def __init__(self, device, input_size, conv_layers, fc_layers, n_class=10):
+        super().__init__()
+        self.lows = []
+        self.highs = []
+        self.activations = []
+
+        self.input_size = input_size
+        self.n_class = n_class
+
+        layers = [Normalization(device)]
+        prev_channels = 1
+        img_dim = input_size
+
+        for n_channels, kernel_size, stride, padding in conv_layers:
+            layers += [
+                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
+                AbstractReluConv(lamda=0.0),
+            ]
+            prev_channels = n_channels
+            img_dim = img_dim // stride
+        layers += [nn.Flatten()]
+
+        prev_fc_size = prev_channels * img_dim * img_dim
+        for i, fc_size in enumerate(fc_layers):
+            layers += [AbstractLinear(prev_fc_size, fc_size)]
+            if i + 1 < len(fc_layers):
+                layers += [AbstractRelu(lamda=0.0)]
+            prev_fc_size = fc_size
+        self.layers = nn.Sequential(*layers)
+
+    def load_weights(self, net):
+        for i, layer in enumerate(net.layers):
+            if type(layer) in [nn.Conv2d, nn.Linear]:
+                self.layers[i].layer.weight = layer.weight
+                self.layers[i].layer.bias = layer.bias
+
+    def forward(self, x, low, high):
+        """
+        Propagation of abstract area through the network.
+        Parameters:
+        - x: input
+        - low: lower bound on input perturbation (epsilon)
+        - high: upper bound on //   //
+        note: all the input tensors have shape (1,1,28,28)
+
+        """
+        # propagate normally through the first two layers
+        x = self.layers[0](x)  # normalization
+        low = self.layers[0](low)
+        high = self.layers[0](high)
+        self.lows += [low]
+        self.highs += [high]
+        self.activations += [x]
+        # now the rest of the layers
+        for i, layer in enumerate(self.layers):
+            if i in [0]: continue  # skipping the ones we already computed
+            # no need to distinguish btw layers as they have same signature now
+            if type(layer) == nn.Flatten:
+                x = layer(x).squeeze()
+                low = layer(low).squeeze()
+                high = layer(high).squeeze()
+                continue
+            x, low, high = layer(x, low, high)
+            self.lows += [low]
+            self.highs += [high]
+            self.activations += [x]
+
+        return x, low, high
