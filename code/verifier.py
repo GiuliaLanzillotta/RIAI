@@ -61,17 +61,17 @@ def analyze(net, inputs, eps, true_label):
     print("Time to propagate: "+str(round(end-start,3)))
     if verified: return verified
 
-    # #4. Backsubstitute if the property is not verified,
-    # # otherwise return
-    # backsub_order = None
-    # with torch.no_grad():
-    #     low, high = net.back_sub(true_label = true_label, order=backsub_order)
-    # # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-    # verified = (low.detach().numpy()>0).all()
-    # #verified = sum((low[true_label] > high).int()) == 9
-    # end = time.time()
-    # print("Time to backsubstitute: "+str(round(end-start,3)))
-    #
+    elif type(net) == AbstractFullyConnected:
+        # #4. Backsubstitute if the property is not verified,
+        # # otherwise return
+        backsub_order = None
+        with torch.no_grad():
+            low, high = net.back_sub(true_label = true_label, order=backsub_order)
+        # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+        verified = (low.detach().numpy()>0).all()
+        #verified = sum((low[true_label] > high).int()) == 9
+        end = time.time()
+        print("Time to backsubstitute: "+str(round(end-start,3)))
     return verified
 
 
@@ -91,7 +91,6 @@ def main():
         pixel_values = [float(line) for line in lines[1:]]
         eps = float(args.spec[:-4].split('/')[-1].split('_')[-1])
 
-    # TODO: create abstract net here 
 
     if args.net == 'fc1':
         net = FullyConnected(DEVICE, INPUT_SIZE, [50, 10]).to(DEVICE)

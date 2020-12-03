@@ -23,25 +23,18 @@ class AbstractLinear(nn.Module):
         """
         Implements swapping of lower and higher bounds 
         where the weights are negative and computes the 
-        forward pass of box bounds. 
-        """
-        low_out = torch.zeros(weights.size()[0])
-        high_out = torch.zeros(weights.size()[0])
+        forward pass of box bounds. """
 
-        # weights is a matrix with shape [in, out]
-        for i, w in enumerate(weights): 
-            # now w is a vector of size [in]
-            # determine the swapping factor 
-            mask_neg = (w<0).int()
-            mask_pos = (w>=0).int()
-            low_input = mask_neg*high + mask_pos*low
-            high_input = mask_pos*high + mask_neg*low
-            # ready to make the forward pass 
-            low_out[i] = torch.matmul(low_input, w) + bias[i]
-            high_out[i] = torch.matmul(high_input, w) + bias[i]
+        mask_neg = (weights < 0).int()
+        mask_pos = (weights < 0).int()
+        weight_neg = torch.multiply(mask_neg, weights)
+        weight_pos = torch.multiply(mask_pos, weights)
+        low_out = (torch.matmul(high, weight_neg.t()) + torch.matmul(low, weight_pos.t()) + bias)
+        high_out = (torch.matmul(low, weight_neg.t()) + torch.matmul(high, weight_pos.t()) + bias)
         
         # quick check here 
         assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
+
         return low_out, high_out
 
     def forward(self, x, low, high): 
@@ -58,10 +51,16 @@ class AbstractLinear(nn.Module):
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
-    def __init__(self, lamda=0.0):
+    def __init__(self):
         super().__init__()
-        self.lamda = lamda
         self.relu = nn.ReLU()
+
+    @staticmethod
+    def val_lamda(low, high):
+        """ Implementing minimum area logic"""
+        if low ** 2 > high ** 2: lamda = 0
+        else:lamda = 1
+        return lamda
 
     def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
@@ -70,7 +69,7 @@ class AbstractRelu(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.lamda
+        self.weight_low[i, i] = self.val_lamda(low, high)
 
     def forward(self, x, low, high):
 
@@ -101,7 +100,6 @@ class AbstractRelu(nn.Module):
 
         return x_out, low_out, high_out
 
-
 class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
     def __init__(self, device, input_size, fc_layers):
@@ -112,7 +110,7 @@ class AbstractFullyConnected(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(lamda=0.0)]
+                layers += [AbstractRelu()]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
         self.lows = []
@@ -176,8 +174,6 @@ class AbstractFullyConnected(nn.Module):
         num_classes = 10 # we will start from the output
         bias_high = torch.zeros(num_classes-1)
         bias_low = torch.zeros(num_classes-1)
-        #bias_high = torch.zeros(num_classes)
-        #bias_low = torch.zeros(num_classes)
 
 
         # First, we insert the affine layer corresponding to the substractions
@@ -190,8 +186,6 @@ class AbstractFullyConnected(nn.Module):
         # now cumulating the last operation
         W_low = W_substract.clone()
         W_high = W_substract.clone()
-        #W_low = torch.eye(num_classes)
-        #W_high = torch.eye(num_classes)
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
             if type(layer) == AbstractLinear: 
                 W_prime_high = layer.layer.weight 
@@ -218,7 +212,6 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
-
 class AbstractConvLayer(nn.Module):
     def __init__(self, prev_channels, n_channels, kernel_size, stride, padding):
         super().__init__()
@@ -232,6 +225,16 @@ class AbstractConvLayer(nn.Module):
 
     @staticmethod
     def forward_image_boxes(low, high, weight, biases):
+        """ Here we apply the convolutional layer to
+        the images' box bounds.
+        low: size = num_sub-images x sub-image size
+        high: //        //
+        weight: our kernels, with size = kernel size x out_channels
+        biases: size = out_channels
+        ---
+        note: sub-image size must equal the kernel size
+
+        """
         low = low.squeeze()
         high = high.squeeze()
         weight = weight.view(weight.size(0), -1).t()
@@ -244,6 +247,7 @@ class AbstractConvLayer(nn.Module):
 
         # quick check here
         assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
+
         return low_out, high_out
 
     def forward(self, x, low, high):
@@ -261,10 +265,15 @@ class AbstractConvLayer(nn.Module):
 
 class AbstractReluConv(nn.Module):
 
-    def __init__(self, lamda=0.0):
+    def __init__(self):
         super().__init__()
-        self.lamda = lamda
         self.relu = nn.ReLU()
+
+    @staticmethod
+    def val_lamda(low, high):
+        if low**2>high**2:lamda = 0
+        else: lamda =1
+        return lamda
 
     def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
@@ -273,7 +282,7 @@ class AbstractReluConv(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.lamda
+        self.weight_low[i, i] = self.val_lamda(low, high)
 
     def forward(self, x, low, high):
         flatten_x = x.view(-1,1)
@@ -307,7 +316,6 @@ class AbstractReluConv(nn.Module):
 
         return x_out, low_out, high_out
 
-
 class AbstractConv(nn.Module):
     """ Abstract version of convolutional model """
 
@@ -327,7 +335,7 @@ class AbstractConv(nn.Module):
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
                 AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
-                AbstractReluConv(lamda=0.0),
+                AbstractReluConv()
             ]
             prev_channels = n_channels
             img_dim = img_dim // stride
@@ -337,7 +345,7 @@ class AbstractConv(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(lamda=0.0)]
+                layers += [AbstractRelu()]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
 
