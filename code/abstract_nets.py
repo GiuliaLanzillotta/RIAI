@@ -23,22 +23,28 @@ class AbstractLinear(nn.Module):
         """
         Implements swapping of lower and higher bounds 
         where the weights are negative and computes the 
-        forward pass of box bounds. 
-        """
-        low_out = torch.zeros(weights.size()[0])
-        high_out = torch.zeros(weights.size()[0])
+        forward pass of box bounds. """
 
-        # weights is a matrix with shape [in, out]
-        for i, w in enumerate(weights): 
-            # now w is a vector of size [in]
-            # determine the swapping factor 
-            mask_neg = (w<0).int()
-            mask_pos = (w>=0).int()
-            low_input = mask_neg*high + mask_pos*low
-            high_input = mask_pos*high + mask_neg*low
-            # ready to make the forward pass 
-            low_out[i] = torch.matmul(low_input, w) + bias[i]
-            high_out[i] = torch.matmul(high_input, w) + bias[i]
+        mask_neg = (weights < 0).int()
+        mask_pos = (weights < 0).int()
+        weight_neg = torch.multiply(mask_neg, weights)
+        weight_pos = torch.multiply(mask_pos, weights)
+        low_out = (torch.matmul(high, weight_neg.t()) + torch.matmul(low, weight_pos.t()) + bias)
+        high_out = (torch.matmul(low, weight_neg.t()) + torch.matmul(high, weight_pos.t()) + bias)
+        # low_out = torch.zeros(weights.size()[0])
+        # high_out = torch.zeros(weights.size()[0])
+        #
+        # # weights is a matrix with shape [in, out]
+        # for i, w in enumerate(weights):
+        #     # now w is a vector of size [in]
+        #     # determine the swapping factor
+        #     mask_neg = (w<0).int()
+        #     mask_pos = (w>=0).int()
+        #     low_input = mask_neg*high + mask_pos*low
+        #     high_input = mask_pos*high + mask_neg*low
+        #     # ready to make the forward pass
+        #     low_out[i] = torch.matmul(low_input, w) + bias[i]
+        #     high_out[i] = torch.matmul(high_input, w) + bias[i]
         
         # quick check here 
         assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
@@ -58,10 +64,16 @@ class AbstractLinear(nn.Module):
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
-    def __init__(self, lamda=0.0):
+    def __init__(self):#, lamda=0.0):
         super().__init__()
-        self.lamda = lamda
+        #self.lamda = lamda
         self.relu = nn.ReLU()
+
+    @staticmethod
+    def val_lamda(low, high):
+        if low ** 2 > high ** 2:lamda = 0
+        else:lamda = 1
+        return lamda
 
     def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
@@ -70,7 +82,7 @@ class AbstractRelu(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.lamda
+        self.weight_low[i, i] = val_lamda(low, high)
 
     def forward(self, x, low, high):
 
@@ -112,7 +124,7 @@ class AbstractFullyConnected(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(lamda=0.0)]
+                layers += [AbstractRelu()]#lamda=0.0)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
         self.lows = []
@@ -261,10 +273,16 @@ class AbstractConvLayer(nn.Module):
 
 class AbstractReluConv(nn.Module):
 
-    def __init__(self, lamda=0.0):
+    def __init__(self):#, lamda=0.0):
         super().__init__()
         self.lamda = lamda
         self.relu = nn.ReLU()
+
+    @staticmethod
+    def val_lamda(low, high):
+        if low**2>high**2:lamda = 0
+        else: lamda =1
+        return lamda
 
     def deepPoly(self, high, low, i):
         # compute the upper bound slope and intercept
@@ -273,7 +291,7 @@ class AbstractReluConv(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.lamda
+        self.weight_low[i, i] = val_lamda(low, high)
 
     def forward(self, x, low, high):
         flatten_x = x.view(-1,1)
@@ -327,7 +345,7 @@ class AbstractConv(nn.Module):
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
                 AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
-                AbstractReluConv(lamda=0.0),
+                AbstractReluConv()#lamda=0.0),
             ]
             prev_channels = n_channels
             img_dim = img_dim // stride
@@ -337,7 +355,7 @@ class AbstractConv(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(lamda=0.0)]
+                layers += [AbstractRelu()]#lamda=0.0)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
 
