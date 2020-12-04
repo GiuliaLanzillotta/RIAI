@@ -125,6 +125,7 @@ def main():
     else:
         assert False
 
+
     # here we are loading the pre-trained net weights 
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
     abstract_net.load_weights(net)

@@ -158,6 +158,7 @@ class AbstractFullyConnected(nn.Module):
             self.highs+=[high]
             self.activations+=[x]
 
+
         return x, low, high
 
     
@@ -212,16 +213,53 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
+
 class AbstractConvLayer(nn.Module):
-    def __init__(self, prev_channels, n_channels, kernel_size, stride, padding):
+    def __init__(self, prev_channels, n_channels, kernel_size, stride, padding, input_dim):
         super().__init__()
-        self.layer = nn.Conv2d(prev_channels, n_channels, kernel_size, stride, padding)
+        self.layer = nn.Conv2d(prev_channels, n_channels, kernel_size, stride=stride, padding=padding)
 
         self.prev_channels = prev_channels
         self.n_channels = n_channels
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.input_dim = input_dim
+
+    def cast_to_affine(self):
+        """ Converts a convolutional layer into an affine layer
+        by calculating a weight matrix and bias equivalent to the convolution
+        kernel """
+        # First of all we should figure out the output dimensions
+        out_img_dim = self.input_dim//2 # checked by hand. Note: this formula only holds for our nets
+        vectorised_input_dim = (self.input_dim**2)*self.prev_channels
+        vectorised_output_dim = (out_img_dim**2)*self.n_channels
+        self.weight = torch.zeros(vectorised_output_dim, vectorised_input_dim, requires_grad=False)
+        self.bias = torch.zeros(vectorised_output_dim, requires_grad=False)
+        kernel = self.layer.weight
+        # okay now let's fill these matrices
+        # note: we have to take into account also the stride!
+        for k in range(self.n_channels):
+            for j in range(0,self.input_dim, self.stride): # move down the rows
+                for i in range(0,self.input_dim, self.stride): # move right in the columns
+                    # initialise the vector for the row
+                    # we will have prev_channels of these vectors
+                    vecs = []
+                    for c in range(self.prev_channels):
+                        vecs_c = []
+                        vec = torch.zeros(self.input_dim ** 2, requires_grad=False)
+                        for j_prim in range(max(0, j - self.kernel_size), j + 1):
+                            start = (c + j_prim) * self.input_dim + max(0, i - self.kernel_size + 1)
+                            end = (c + j_prim) * self.input_dim + min(i, self.input_dim - 1) + 1
+                            kernel_row = (min(j - j_prim + 1, self.kernel_size))
+                            kernel_col = min(i + 1, self.kernel_size,
+                                             max(0, self.input_dim + self.kernel_size - (i+1)))
+                            vec[start:end] = kernel[k, c, -kernel_row, 0:kernel_col]
+                            vecs_c += [vec]
+                        vec_c = torch.cat(vecs_c)
+                        vecs += [vec_c]
+                    self.weight[k*(out_img_dim):(k+1)*out_img_dim,:] = torch.cat(vecs)
+
 
     @staticmethod
     def forward_image_boxes(low, high, weight, biases):
@@ -229,7 +267,7 @@ class AbstractConvLayer(nn.Module):
         the images' box bounds.
         low: size = num_sub-images x sub-image size
         high: //        //
-        weight: our kernels, with size = kernel size x out_channels
+        weight: our kernels, with size = out_channels x kernel size
         biases: size = out_channels
         ---
         note: sub-image size must equal the kernel size
@@ -334,7 +372,8 @@ class AbstractConv(nn.Module):
 
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
-                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding),
+                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding,
+                                  input_size = img_dim),
                 AbstractReluConv()
             ]
             prev_channels = n_channels
@@ -387,3 +426,5 @@ class AbstractConv(nn.Module):
             self.activations += [x]
 
         return x, low, high
+
+
