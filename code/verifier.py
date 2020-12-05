@@ -64,11 +64,16 @@ def analyze(net, inputs, eps, true_label):
     elif type(net) == AbstractFullyConnected:
         # #4. Backsubstitute if the property is not verified,
         # # otherwise return
-        backsub_order = None
-        with torch.no_grad():
-            low, high = net.back_sub(true_label = true_label, order=backsub_order)
-        # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-        verified = (low.detach().numpy()>0).all()
+        for i in range(2,len(net.activations)+1):
+        # backsub_order = None
+            backsub_order = i
+            with torch.no_grad():
+                low, high = net.back_sub(true_label = true_label, order=backsub_order)
+            # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+            verified = (low.detach().numpy()>0).all()
+            if verified:
+                print('order of backsub '+str(i))
+                break
         #verified = sum((low[true_label] > high).int()) == 9
         end = time.time()
         print("Time to backsubstitute: "+str(round(end-start,3)))
