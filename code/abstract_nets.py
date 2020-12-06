@@ -280,28 +280,36 @@ class AbstractConvLayer(nn.Module):
         self.weight = torch.zeros(vectorised_output_dim, vectorised_input_dim, requires_grad=False)
         self.bias = torch.zeros(vectorised_output_dim, requires_grad=False)
         kernel = self.layer.weight
+        kernel_bias = self.layer.bias
         # okay now let's fill these matrices
         # note: we have to take into account also the stride!
+        counter = 0
         for k in range(self.n_channels):
-            for j in range(0,self.input_dim, self.stride): # move down the rows
-                for i in range(0,self.input_dim, self.stride): # move right in the columns
+            for j in range(self.kernel_size - self.padding, self.input_dim + self.padding + 1, self.stride):  # move down the rows
+                for i in range(self.kernel_size - self.padding, self.input_dim + self.padding + 1, self.stride):  # move right in the columns
                     # initialise the vector for the row
                     # we will have prev_channels of these vectors
-                    vecs = []
+                    vec = torch.zeros(self.input_dim ** 2 * self.prev_channels, requires_grad=False)
+                    print(" i ", i, "| j ", j, "| k ", k)
                     for c in range(self.prev_channels):
-                        vecs_c = []
-                        vec = torch.zeros(self.input_dim ** 2, requires_grad=False)
-                        for j_prim in range(max(0, j - self.kernel_size), j + 1):
-                            start = (c + j_prim) * self.input_dim + max(0, i - self.kernel_size + 1)
-                            end = (c + j_prim) * self.input_dim + min(i, self.input_dim - 1) + 1
-                            kernel_row = (min(j - j_prim + 1, self.kernel_size))
-                            kernel_col = min(i + 1, self.kernel_size,
-                                             max(0, self.input_dim + self.kernel_size - (i+1)))
-                            vec[start:end] = kernel[k, c, -kernel_row, 0:kernel_col]
-                            vecs_c += [vec]
-                        vec_c = torch.cat(vecs_c)
-                        vecs += [vec_c]
-                    self.weight[k*(out_img_dim):(k+1)*out_img_dim,:] = torch.cat(vecs)
+                        for j_prim in range(max(0, j - self.kernel_size), min(j, self.input_dim)):
+                            # j_prim*self.input_dim = shift in the rows of the original image (each row is afer self.input_dim entries)
+                            # c * self.input_dim**2 = shift in the channels of the original image (each new channel after self.input_dim*2 entries)
+                            start = j_prim * self.input_dim + c * self.input_dim ** 2 + max(i - self.kernel_size,
+                                                                                  0)  # i is the last column we are touching
+                            end = min(i + j_prim * self.input_dim + c * self.input_dim ** 2,
+                                      c * self.input_dim ** 2 + (j_prim + 1) * self.input_dim)
+                            kernel_row = min(j - j_prim, self.kernel_size)  # j is the last row we are touching
+                            kernel_col = min(i, self.kernel_size)
+                            num_columns_to_use = end - start
+                            if num_columns_to_use < self.kernel_size < i:
+                                vec[start:end] = kernel[k, c, -kernel_row, -kernel_col:-kernel_col + num_columns_to_use]
+                            else:
+                                vec[start:end] = kernel[k, c, -kernel_row, -kernel_col:]
+                    self.bias[counter] = kernel_bias[k]
+                    self.weight[counter, :] = vec
+
+                    counter += 1
 
 
     @staticmethod
