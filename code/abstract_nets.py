@@ -275,10 +275,10 @@ class AbstractConvLayer(nn.Module):
         kernel """
         # First of all we should figure out the output dimensions
         out_img_dim = self.input_dim//2 # checked by hand. Note: this formula only holds for our nets
-        vectorised_input_dim = (self.input_dim**2)*self.prev_channels
-        vectorised_output_dim = (out_img_dim**2)*self.n_channels
-        self.weight = torch.zeros(vectorised_output_dim, vectorised_input_dim, requires_grad=False)
-        self.bias = torch.zeros(vectorised_output_dim, requires_grad=False)
+        self.vectorised_input_dim = (self.input_dim**2)*self.prev_channels
+        self.vectorised_output_dim = (out_img_dim**2)*self.n_channels
+        self.weight = torch.zeros(self.vectorised_output_dim, self.vectorised_input_dim, requires_grad=False)
+        self.bias = torch.zeros(self.vectorised_output_dim, requires_grad=False)
         kernel = self.layer.weight
         kernel_bias = self.layer.bias
         # okay now let's fill these matrices
@@ -290,7 +290,7 @@ class AbstractConvLayer(nn.Module):
                     # initialise the vector for the row
                     # we will have prev_channels of these vectors
                     vec = torch.zeros(self.input_dim ** 2 * self.prev_channels, requires_grad=False)
-                    print(" i ", i, "| j ", j, "| k ", k)
+                    #print(" i ", i, "| j ", j, "| k ", k)
                     for c in range(self.prev_channels):
                         for j_prim in range(max(0, j - self.kernel_size), min(j, self.input_dim)):
                             # j_prim*self.input_dim = shift in the rows of the original image (each row is afer self.input_dim entries)
@@ -311,100 +311,6 @@ class AbstractConvLayer(nn.Module):
 
                     counter += 1
 
-
-    @staticmethod
-    def forward_image_boxes(low, high, weight, biases):
-        """ Here we apply the convolutional layer to
-        the images' box bounds.
-        low: size = num_sub-images x sub-image size
-        high: //        //
-        weight: our kernels, with size = out_channels x kernel size
-        biases: size = out_channels
-        ---
-        note: sub-image size must equal the kernel size
-
-        """
-        low = low.squeeze()
-        high = high.squeeze()
-        weight = weight.view(weight.size(0), -1).t()
-        mask_neg = (weight < 0).int()
-        mask_pos = (weight < 0).int()
-        weight_neg = torch.multiply(mask_neg, weight)
-        weight_pos = torch.multiply(mask_pos, weight)
-        low_out = (torch.matmul(high,weight_neg)+torch.matmul(low, weight_pos) + biases).t()
-        high_out = (torch.matmul(low, weight_neg) + torch.matmul(high, weight_pos) +biases).t()
-
-        # quick check here
-        assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
-
-        return low_out, high_out
-
-    def forward(self, x, low, high):
-        w = self.layer.weight
-        b = self.layer.bias
-        # Handmade conv
-        low = torch.nn.functional.unfold(low, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
-        high = torch.nn.functional.unfold(high, self.kernel_size, 1, self.padding, self.stride).transpose(1, 2)
-        low, high = self.forward_image_boxes(low, high, w, b)
-        x = self.layer(x)
-        low = low.view(x.size())
-        high = high.view(x.size())
-
-        return x, low, high
-
-class AbstractReluConv(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.relu = nn.ReLU()
-
-    @staticmethod
-    def val_lamda(low, high):
-        if low**2>high**2:lamda = 0
-        else: lamda =1
-        return lamda
-
-    def deepPoly(self, high, low, i):
-        # compute the upper bound slope and intercept
-        ub_slope = high/(high-low) #upper bound slope with capacity to have high=low=0
-        ub_int = -(low*high)/(high-low) #intercept of upper bound line
-        # save weight and biases for lower and upper bounds
-        self.weight_high[i,i] = ub_slope
-        self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.val_lamda(low, high)
-
-    def forward(self, x, low, high):
-        flatten_x = x.view(-1,1)
-        input_size = flatten_x.size()[0]
-        low = low.reshape(-1,1)
-        high = high.reshape(-1,1)
-
-        # Initialise the matrices
-        self.weight_low = torch.eye(input_size, input_size)
-        self.bias_low = torch.zeros(input_size)
-        self.weight_high = torch.eye(input_size, input_size)
-        self.bias_high = torch.zeros(input_size)
-
-        for i in range(input_size):
-            if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
-                '''implement forward version of the DeepPoly'''
-                self.deepPoly(high[i], low[i], i) # modify weights
-            elif high[i] <= 0:
-                self.weight_high[i, i] = 0
-                self.weight_low[i, i] = 0
-            else:
-                pass
-            # note: if low >=0 we have not done anything,
-            # so we can just return the input!
-        # compute lower and upper bounds
-        # Build the output
-
-        x_out = self.relu(flatten_x).view(x.size())
-        high_out = (torch.matmul(self.weight_high,high.squeeze()) + self.bias_high).view(x.size())
-        low_out = (torch.matmul(self.weight_low,low.squeeze()) + self.bias_low).view(x.size())
-
-        return x_out, low_out, high_out
-
 class AbstractConv(nn.Module):
     """ Abstract version of convolutional model """
 
@@ -423,9 +329,8 @@ class AbstractConv(nn.Module):
 
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
-                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding,
-                                  input_size = img_dim),
-                AbstractReluConv()
+                AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding, input_dim = img_dim),
+                AbstractRelu()
             ]
             prev_channels = n_channels
             img_dim = img_dim // stride
@@ -445,37 +350,36 @@ class AbstractConv(nn.Module):
                 self.layers[i].layer.weight = layer.weight
                 self.layers[i].layer.bias = layer.bias
 
-    def forward(self, x, low, high):
-        """
-        Propagation of abstract area through the network.
-        Parameters:
-        - x: input
-        - low: lower bound on input perturbation (epsilon)
-        - high: upper bound on //   //
-        note: all the input tensors have shape (1,1,28,28)
+    def make_fully_connected(self, device):
+        """ Returns the fully connected equivalent of the current convolutional net"""
+        layers_dims = []
+        layers_weights = []
+        layers_biases = []
+        for layer in self.layers:
+            if type(layer)==AbstractConvLayer:
+                layer.cast_to_affine() # first cast
+                weight = layer.weight # then copy
+                bias = layer.bias
+            elif type(layer)==AbstractLinear:
+                weight = layer.layer.weight
+                bias = layer.layer.bias
+            else : continue
 
-        """
-        # propagate normally through the first two layers
-        x = self.layers[0](x)  # normalization
-        low = self.layers[0](low)
-        high = self.layers[0](high)
-        self.lows += [low]
-        self.highs += [high]
-        self.activations += [x]
-        # now the rest of the layers
-        for i, layer in enumerate(self.layers):
-            if i in [0]: continue  # skipping the ones we already computed
-            # no need to distinguish btw layers as they have same signature now
-            if type(layer) == nn.Flatten:
-                x = layer(x).squeeze()
-                low = layer(low).squeeze()
-                high = layer(high).squeeze()
-                continue
-            x, low, high = layer(x, low, high)
-            self.lows += [low]
-            self.highs += [high]
-            self.activations += [x]
+            layers_dims += [weight.size()[0]]
+            layers_weights += [weight]
+            layers_biases += [bias]
 
-        return x, low, high
+        FCnet = AbstractFullyConnected(device, self.input_size, layers_dims).to(device)
+        FCnet.requires_grad = False
+        # finally load the weights
+        cnt = 0
+        for layer in FCnet.layers:
+            if type(layer) == AbstractLinear:
+                layer.layer.weight = torch.nn.Parameter(layers_weights[cnt])
+                layer.layer.bias = torch.nn.Parameter(layers_biases[cnt])
+                cnt +=1
+
+        return FCnet
+
 
 

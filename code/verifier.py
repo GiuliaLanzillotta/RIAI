@@ -60,22 +60,15 @@ def analyze(net, inputs, eps, true_label):
     end = time.time()
     print("Time to propagate: "+str(round(end-start,3)))
     if verified: return verified
-
-    elif type(net) == AbstractFullyConnected:
-        # #4. Backsubstitute if the property is not verified,
-        # # otherwise return
-        for i in range(2,len(net.activations)+1):
-        #backsub_order = None
-            backsub_order = i
-            with torch.no_grad():
-                low, high = net.back_sub(true_label = true_label, order=backsub_order)
-            # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-            verified = (low.detach().numpy()>0).all()
-            if verified:
-                break
-        #verified = sum((low[true_label] > high).int()) == 9
-        end = time.time()
-        print("Time to backsubstitute: "+str(round(end-start,3)))
+    #4. Backsubstitute if the property is not verified, otherwise return
+    backsub_order = None
+    with torch.no_grad():
+        low, high = net.back_sub(true_label = true_label, order=backsub_order)
+    # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+    verified = (low.detach().numpy()>0).all()
+    #verified = sum((low[true_label] > high).int()) == 9
+    end = time.time()
+    print("Time to backsubstitute: "+str(round(end-start,3)))
     return verified
 
 
@@ -133,6 +126,11 @@ def main():
     # here we are loading the pre-trained net weights 
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
     abstract_net.load_weights(net)
+    if type(abstract_net)==AbstractConv:
+        #cast it to fully connected
+        print("Converting the network to fully connected...")
+        abstract_net = abstract_net.make_fully_connected(DEVICE)
+        print("Conversion done")
 
     abstract_net.requires_grad = False
     inputs = torch.FloatTensor(pixel_values).view(1, 1, INPUT_SIZE, INPUT_SIZE).to(DEVICE)
