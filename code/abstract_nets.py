@@ -31,7 +31,7 @@ class AbstractLinear(nn.Module):
         weight_pos = torch.multiply(mask_pos, weights)
         low_out = (torch.matmul(high, weight_neg.t()) + torch.matmul(low, weight_pos.t()) + bias)
         high_out = (torch.matmul(low, weight_neg.t()) + torch.matmul(high, weight_pos.t()) + bias)
-        
+
         # quick check here 
         assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
 
@@ -69,7 +69,7 @@ class AbstractRelu(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] = self.val_lamda(low, high)
+        self.weight_low[i, i] =self.val_lamda(low, high)
 
     def forward(self, x, low, high):
 
@@ -124,6 +124,46 @@ class AbstractFullyConnected(nn.Module):
                 self.layers[i].layer.weight = layer.weight
                 self.layers[i].layer.bias = layer.bias
 
+    def back_sub_layers(self, layer_index, size_input):
+        """ Implements backsubstitution
+        true_label (int): index (0 to 9) of the right label - used in the last step of backsubstitution
+        order (int): defines number of layers to backsubstitute starting from the output.
+        """
+
+        low = self.lows[0]
+        high = self.highs[0]
+
+        W_low = torch.eye(size_input, size_input)
+        W_high = torch.eye(size_input, size_input)
+        bias_high = torch.zeros(size_input)
+        bias_low = torch.zeros(size_input)
+
+        for layer in reversed(self.layers[2:layer_index+1]):
+            if type(layer) == AbstractLinear:
+                W_prime_high = layer.layer.weight
+                b_prime_high = layer.layer.bias
+                W_prime_low = layer.layer.weight
+                b_prime_low = layer.layer.bias
+            elif type(layer) == AbstractRelu:
+                W_prime_low = layer.weight_low
+                b_prime_low = layer.bias_low
+                W_prime_high = layer.weight_high
+                b_prime_high = layer.bias_high
+            else:
+                raise Exception("Unknown layer in the forward pass ")
+            bias_high += torch.matmul(W_high, b_prime_high)
+            W_high = torch.matmul(W_high, W_prime_high)
+            bias_low += torch.matmul(W_low, b_prime_low)
+            W_low = torch.matmul(W_low,W_prime_low)
+
+
+        # finally computing the forward pass on the input ranges
+        # note: no bias here (all the biases were already included in W)
+        low_out, _ = AbstractLinear.forward_boxes(W_low, bias_low, low, high)
+        _, high_out = AbstractLinear.forward_boxes(W_high, bias_high, low, high)
+
+        return low_out, high_out
+
 
     def forward(self, x, low, high):
         """
@@ -149,11 +189,13 @@ class AbstractFullyConnected(nn.Module):
         self.lows+=[low]
         self.highs+=[high]
         self.activations+=[x]
-        #now the rest of the layers 
+        #now the rest of the layers
         for i, layer in enumerate(self.layers):
             if i in [0,1]: continue # skipping the ones we already computed 
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
+            if type(layer)==AbstractLinear:
+                low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
             self.lows+=[low]
             self.highs+=[high]
             self.activations+=[x]
@@ -163,9 +205,9 @@ class AbstractFullyConnected(nn.Module):
 
     
     def back_sub(self, true_label, order=None):
-        """ Implements backsubstitution 
+        """ Implements backsubstitution
         true_label (int): index (0 to 9) of the right label - used in the last step of backsubstitution
-        order (int): defines number of layers to backsubstitute starting from the output.  
+        order (int): defines number of layers to backsubstitute starting from the output.
         """
         if order is None: order = len(self.activations) # example: 10 layers, 9 actual lows and highs, 1 for the input, 8 for the rest of the layers
         low = self.lows[-order]
@@ -188,17 +230,17 @@ class AbstractFullyConnected(nn.Module):
         W_low = W_substract.clone()
         W_high = W_substract.clone()
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
-            if type(layer) == AbstractLinear: 
-                W_prime_high = layer.layer.weight 
+            if type(layer) == AbstractLinear:
+                W_prime_high = layer.layer.weight
                 b_prime_high = layer.layer.bias
-                W_prime_low = layer.layer.weight 
+                W_prime_low = layer.layer.weight
                 b_prime_low = layer.layer.bias
             elif type(layer) == AbstractRelu:
                 W_prime_low = layer.weight_low
                 b_prime_low = layer.bias_low
                 W_prime_high = layer.weight_high
                 b_prime_high = layer.bias_high
-            else: 
+            else:
                 raise Exception("Unknown layer in the forward pass ")
             bias_high += torch.matmul(W_high, b_prime_high)
             W_high = torch.matmul(W_high, W_prime_high)
@@ -212,6 +254,7 @@ class AbstractFullyConnected(nn.Module):
         _, high_out = AbstractLinear.forward_boxes(W_high, bias_high, low, high)
 
         return low_out, high_out
+
 
 
 class AbstractConvLayer(nn.Module):
