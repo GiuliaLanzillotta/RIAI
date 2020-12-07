@@ -252,10 +252,13 @@ class AbstractFullyConnected(nn.Module):
         W_high = W_substract.clone()
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
             if type(layer) == AbstractLinear:
+                # TODO: also trace swapping for bias
                 W_prime_high = layer.layer.weight
                 b_prime_high = layer.layer.bias
                 W_prime_low = layer.layer.weight
                 b_prime_low = layer.layer.bias
+                bias_high += torch.matmul(W_high, b_prime_high)
+                bias_low += torch.matmul(W_low, b_prime_low)
                 W_high = torch.matmul(W_high, W_prime_high)
                 W_low = torch.matmul(W_low, W_prime_low)
 
@@ -264,12 +267,12 @@ class AbstractFullyConnected(nn.Module):
                 b_prime_low = layer.bias_low
                 W_prime_high = layer.weight_high
                 b_prime_high = layer.bias_high
+                bias_high += torch.matmul(W_high, b_prime_high)
+                bias_low += torch.matmul(W_low, b_prime_low)
                 W_high = self.back_sub_relu(W_high, W_prime_high, W_prime_low)
                 W_low = self.back_sub_relu(W_low, W_prime_high, W_prime_low, high=False)
             else:
                 raise Exception("Unknown layer in the forward pass ")
-            bias_high += torch.matmul(W_high, b_prime_high)
-            bias_low += torch.matmul(W_low, b_prime_low)
 
 
         # finally computing the forward pass on the input ranges
