@@ -203,7 +203,28 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    
+    def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, high=True):
+        """ Computes matrix multiplication for backsubstitution
+        when passing through a relu layer """
+        out_dim, in_dim = back_sub_matrix.size()
+        #initialise everything to 0
+        output_matrix = torch.zeros_like(back_sub_matrix)
+        # now we want to go into each entry in the back_sub matrix
+        # and multiply it by the respective relu weight
+        for j in range(in_dim):# for each column of the matrix
+            relu_high_factor = relu_high_matrix[j,j]
+            relu_low_factor = relu_low_matrix[j,j]
+            if relu_high_factor and relu_low_factor !=0: # otherwise we keep the default
+                for i in range(out_dim): # for each row in the column
+                    entry = back_sub_matrix[i,j]
+                    if entry>0:
+                        if high: output_matrix[i,j] = entry*relu_high_factor
+                        else: output_matrix[i,j] = entry*relu_low_factor
+                    else:
+                        if high: output_matrix[i,j] = entry*relu_low_factor
+                        else: output_matrix[i,j] = entry*relu_high_factor
+        return output_matrix
+
     def back_sub(self, true_label, order=None):
         """ Implements backsubstitution
         true_label (int): index (0 to 9) of the right label - used in the last step of backsubstitution
@@ -235,17 +256,20 @@ class AbstractFullyConnected(nn.Module):
                 b_prime_high = layer.layer.bias
                 W_prime_low = layer.layer.weight
                 b_prime_low = layer.layer.bias
+                W_high = torch.matmul(W_high, W_prime_high)
+                W_low = torch.matmul(W_low, W_prime_low)
+
             elif type(layer) == AbstractRelu:
                 W_prime_low = layer.weight_low
                 b_prime_low = layer.bias_low
                 W_prime_high = layer.weight_high
                 b_prime_high = layer.bias_high
+                W_high = self.back_sub_relu(W_high, W_prime_high, W_prime_low)
+                W_low = self.back_sub_relu(W_low, W_prime_high, W_prime_low, high=False)
             else:
                 raise Exception("Unknown layer in the forward pass ")
             bias_high += torch.matmul(W_high, b_prime_high)
-            W_high = torch.matmul(W_high, W_prime_high)
             bias_low += torch.matmul(W_low, b_prime_low)
-            W_low = torch.matmul(W_low,W_prime_low)
 
 
         # finally computing the forward pass on the input ranges
