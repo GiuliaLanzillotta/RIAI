@@ -26,7 +26,7 @@ class AbstractLinear(nn.Module):
         forward pass of box bounds. """
 
         mask_neg = (weights < 0).int()
-        mask_pos = (weights < 0).int()
+        mask_pos = (weights >= 0).int()
         weight_neg = torch.multiply(mask_neg, weights)
         weight_pos = torch.multiply(mask_pos, weights)
         low_out = (torch.matmul(high, weight_neg.t()) + torch.matmul(low, weight_pos.t()) + bias)
@@ -125,9 +125,7 @@ class AbstractFullyConnected(nn.Module):
                 self.layers[i].layer.bias = layer.bias
 
     def back_sub_layers(self, layer_index, size_input):
-        """ Implements backsubstitution
-        true_label (int): index (0 to 9) of the right label - used in the last step of backsubstitution
-        order (int): defines number of layers to backsubstitute starting from the output.
+        """ Implements backsubstitution up to the layer layer_index
         """
 
         low = self.lows[0]
