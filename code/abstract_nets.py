@@ -144,18 +144,20 @@ class AbstractFullyConnected(nn.Module):
                 b_prime_high = layer.layer.bias
                 W_prime_low = layer.layer.weight
                 b_prime_low = layer.layer.bias
+                bias_high += torch.matmul(W_high, b_prime_high)
+                bias_low += torch.matmul(W_low, b_prime_low)
+                W_high = torch.matmul(W_high, W_prime_high)
+                W_low = torch.matmul(W_low, W_prime_low)
             elif type(layer) == AbstractRelu:
                 W_prime_low = layer.weight_low
-                b_prime_low = layer.bias_low
                 W_prime_high = layer.weight_high
                 b_prime_high = layer.bias_high
+                W_high, delta_bias_high = self.back_sub_relu(W_high, W_prime_high, W_prime_low, bias_high=b_prime_high)
+                W_low, delta_bias_low = self.back_sub_relu(W_low, W_prime_high, W_prime_low, bias_high=b_prime_high, high=False)
+                bias_high += delta_bias_high
+                bias_low += delta_bias_low
             else:
                 raise Exception("Unknown layer in the forward pass ")
-            bias_high += torch.matmul(W_high, b_prime_high)
-            W_high = torch.matmul(W_high, W_prime_high)
-            bias_low += torch.matmul(W_low, b_prime_low)
-            W_low = torch.matmul(W_low,W_prime_low)
-
 
         # finally computing the forward pass on the input ranges
         # note: no bias here (all the biases were already included in W)
@@ -195,7 +197,7 @@ class AbstractFullyConnected(nn.Module):
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
             if type(layer)==AbstractLinear:
-                low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
+               low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
             self.lows+=[low]
             self.highs+=[high]
             self.activations+=[x]
@@ -203,27 +205,32 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, high=True):
+    def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, bias_high, high=True):
         """ Computes matrix multiplication for backsubstitution
         when passing through a relu layer """
         out_dim, in_dim = back_sub_matrix.size()
         #initialise everything to 0
         output_matrix = torch.zeros_like(back_sub_matrix)
+        bias_vector = torch.zeros(back_sub_matrix.size()[0])
         # now we want to go into each entry in the back_sub matrix
         # and multiply it by the respective relu weight
         for j in range(in_dim):# for each column of the matrix
             relu_high_factor = relu_high_matrix[j,j]
             relu_low_factor = relu_low_matrix[j,j]
-            if relu_high_factor and relu_low_factor !=0: # otherwise we keep the default
+            if relu_high_factor !=0: # otherwise we keep the default
                 for i in range(out_dim): # for each row in the column
                     entry = back_sub_matrix[i,j]
                     if entry>0:
-                        if high: output_matrix[i,j] = entry*relu_high_factor
+                        if high:
+                            output_matrix[i,j] = entry*relu_high_factor
+                            bias_vector[i] += entry*bias_high[j]
                         else: output_matrix[i,j] = entry*relu_low_factor
                     else:
                         if high: output_matrix[i,j] = entry*relu_low_factor
-                        else: output_matrix[i,j] = entry*relu_high_factor
-        return output_matrix
+                        else:
+                            output_matrix[i,j] = entry*relu_high_factor
+                            bias_vector[i] += entry * bias_high[j]
+        return output_matrix, bias_vector
 
     def back_sub(self, true_label, order=None):
         """ Implements backsubstitution
@@ -252,7 +259,6 @@ class AbstractFullyConnected(nn.Module):
         W_high = W_substract.clone()
         for layer in reversed(self.layers[-(order-1):]): # order = layers -1 --> order -1 = layers -2 --> skipping first two layers
             if type(layer) == AbstractLinear:
-                # TODO: also trace swapping for bias
                 W_prime_high = layer.layer.weight
                 b_prime_high = layer.layer.bias
                 W_prime_low = layer.layer.weight
@@ -264,13 +270,13 @@ class AbstractFullyConnected(nn.Module):
 
             elif type(layer) == AbstractRelu:
                 W_prime_low = layer.weight_low
-                b_prime_low = layer.bias_low
                 W_prime_high = layer.weight_high
                 b_prime_high = layer.bias_high
-                bias_high += torch.matmul(W_high, b_prime_high)
-                bias_low += torch.matmul(W_low, b_prime_low)
-                W_high = self.back_sub_relu(W_high, W_prime_high, W_prime_low)
-                W_low = self.back_sub_relu(W_low, W_prime_high, W_prime_low, high=False)
+                W_high, delta_bias_high = self.back_sub_relu(W_high, W_prime_high, W_prime_low, bias_high = b_prime_high)
+                W_low, delta_bias_low = self.back_sub_relu(W_low, W_prime_high, W_prime_low, bias_high = b_prime_high, high=False)
+                bias_high += delta_bias_high
+                bias_low += delta_bias_low
+
             else:
                 raise Exception("Unknown layer in the forward pass ")
 
