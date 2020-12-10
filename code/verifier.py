@@ -8,6 +8,19 @@ DEVICE = 'cpu'
 INPUT_SIZE = 28
 
 
+class LamdaLoss(torch.nn.Module):
+    """ Custom loss function to optimise the lamdas"""
+    def __init__(self):
+        super(LamdaLoss, self).__init__()
+
+    @staticmethod
+    def forward(last_low, last_high):
+        """ Compute the loss on the lamdas as the sum of the width of the
+        last layers' neurons' bounds"""
+        assert (last_high>=last_low).all(), "Error with the box bounds: low>high"
+        loss = torch.sum(last_high - last_low)
+        return loss
+
 def prepare_input_verifier(inputs, eps):
     """ 
     This function computes the input to the verifier. 
@@ -25,6 +38,26 @@ def prepare_input_verifier(inputs, eps):
     low = torch.max(inputs - eps, torch.tensor(0.0)) # may we should limit this to something very small instead than 0?
     high = torch.min(inputs + eps, torch.tensor(1.0))
     return inputs, low, high
+
+def update_lamdas(low, high, lamdas):
+    """ Wrapping function for all the operation necessary
+    to make an optimization step for the lamdas"""
+    loss = LamdaLoss()
+    loss_value = loss(low, high)
+
+    num_epochs = 20
+    learning_rate = 0.0001
+    opt = optim.Adam(params=model.parameters(), lr=learning_rate)
+    opt.zero_grad()
+
+    loss_value.backward()
+    # note: the lamdas have to be between 0 and 1, hence we
+    # cannot simply update them with a gradient descent step
+    # - we also need to project back to the [0, 1] box
+    out = input_ + eps * input_.grad.sign()
+    out.clamp_(min=clip_min, max=clip_max)
+    return out
+
 
 def analyze(net, inputs, eps, true_label):
     """
@@ -48,10 +81,9 @@ def analyze(net, inputs, eps, true_label):
     start = time.time()
     # 1. Define the input box - the format should be defined by us 
     # as it will be used by our propagation function. 
-    inputs, low, high = prepare_input_verifier(inputs, eps)
+    inputs, low_orig, high_orig = prepare_input_verifier(inputs, eps)
     # 2. Propagate the region across the net
-    with torch.no_grad():
-        outputs, low, high = net(inputs, low, high)
+    outputs, low, high = net(inputs, low_orig, high_orig)
     # 3. Verify the property 
     # in order to always predict the right label in this perturbation 
     # zone the logits for the right label need to always be 
@@ -60,7 +92,20 @@ def analyze(net, inputs, eps, true_label):
     end = time.time()
     print("Time to propagate: "+str(round(end-start,3)))
     if verified: return verified
-    #4. Backsubstitute if the property is not verified, otherwise return
+
+    # 4. Update the lamdas to optimise our loss and try to verify again
+    start = time.time()
+    print("Optimising the lamdas...")
+    lamdas = net.get_lamdas()
+    new_lamdas = update_lamdas(low, high, lamdas)
+    net.set_lamdas(new_lamdas)
+    outputs, low, high = net(inputs, low_orig, high_orig)
+    verified = sum((low[true_label]>high).int())==9
+    end = time.time()
+    print("Second time to propagate: "+str(round(end-start,3)))
+    if verified: return verified
+
+    # 5. Backsubstitute if the property is not verified, otherwise return
     backsub_order = None
     with torch.no_grad():
         low, high = net.back_sub(true_label = true_label, order=backsub_order)

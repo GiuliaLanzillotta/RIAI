@@ -17,6 +17,7 @@ class AbstractLinear(nn.Module):
     def __init__(self, input_size, output_size):
         super().__init__()
         self.layer = nn.Linear(input_size, output_size)
+        self.layer.requires_grad_(False)
     
     @staticmethod
     def forward_boxes(weights, bias, low, high):
@@ -51,9 +52,11 @@ class AbstractLinear(nn.Module):
 
 class AbstractRelu(nn.Module):
     """ Abstract version of ReLU layer """
-    def __init__(self):
+    def __init__(self, input_dim):
         super().__init__()
         self.relu = nn.ReLU()
+        self.lamda = torch.zeros(input_dim)
+        self.lamda.requires_grad_(True)
 
     @staticmethod
     def val_lamda(low, high):
@@ -69,7 +72,7 @@ class AbstractRelu(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] =self.val_lamda(low, high)
+        self.weight_low[i, i] =self.lamda
 
     def forward(self, x, low, high):
 
@@ -110,7 +113,7 @@ class AbstractFullyConnected(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu()]
+                layers += [AbstractRelu(fc_size)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
         self.lows = []
@@ -164,7 +167,6 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
-
     def forward(self, x, low, high):
         """
         Propagation of abstract area through the network. 
@@ -202,6 +204,15 @@ class AbstractFullyConnected(nn.Module):
 
 
         return x, low, high
+
+    def get_lamdas(self):
+        """ Returns the lamdas of all the ReLus in the net"""
+        pass
+
+    def set_lamdas(self, new_lamdas):
+        """ Sets the value of the lamdas for all the ReLus
+        in the net to the given values"""
+        pass
 
     def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, bias_high, high=True):
         """ Computes matrix multiplication for backsubstitution
@@ -285,8 +296,6 @@ class AbstractFullyConnected(nn.Module):
         _, high_out = AbstractLinear.forward_boxes(W_high, bias_high, low, high)
 
         return low_out, high_out
-
-
 
 class AbstractConvLayer(nn.Module):
     def __init__(self, prev_channels, n_channels, kernel_size, stride, padding, input_dim):
