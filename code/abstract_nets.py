@@ -12,6 +12,8 @@ from networks import Normalization
 from torch import nn
 import torch
 
+DEVICE = 'cpu'
+
 class AbstractLinear(nn.Module):
     """ Abstract version of linear layer """ 
     def __init__(self, input_size, output_size):
@@ -55,8 +57,14 @@ class AbstractRelu(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
         self.relu = nn.ReLU()
+        self.size = input_dim
         self.lamda = torch.zeros(input_dim)
-        self.lamda.requires_grad_(True)
+        self.is_lamda_active = False
+
+
+    def activate_lamda_update(self):
+        self.lamda = torch.nn.Parameter(self.lamda, requires_grad=True)
+        self.is_lamda_active = True
 
     @staticmethod
     def val_lamda(low, high):
@@ -72,7 +80,9 @@ class AbstractRelu(nn.Module):
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        self.weight_low[i, i] =self.lamda
+        if not self.is_lamda_active:
+            self.lamda[i] = self.val_lamda(low, high)
+        self.weight_low[i, i] = self.lamda[i]
 
     def forward(self, x, low, high):
 
@@ -91,8 +101,7 @@ class AbstractRelu(nn.Module):
             elif high[i] <= 0:
                 self.weight_high[i, i] = 0
                 self.weight_low[i, i] = 0
-            else:
-                pass
+            else: pass
             # note: if low >=0 we have not done anything,
             # so we can just return the input!
         # compute lower and upper bounds
@@ -111,21 +120,20 @@ class AbstractFullyConnected(nn.Module):
                     nn.Flatten()]
         prev_fc_size = input_size * input_size
         for i, fc_size in enumerate(fc_layers):
-            layers += [AbstractLinear(prev_fc_size, fc_size)]
+            with torch.no_grad():
+                layers += [AbstractLinear(prev_fc_size, fc_size).to(DEVICE)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu(fc_size)]
+                layers += [AbstractRelu(fc_size).to(DEVICE)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
-        self.lows = []
-        self.highs = []
-        self.activations = []
-    
 
     def load_weights(self, net):
         for i, layer in enumerate(net.layers):
             if type(layer) == nn.Linear:
                 self.layers[i].layer.weight = layer.weight
+                self.layers[i].layer.weight.requires_grad_(False)
                 self.layers[i].layer.bias = layer.bias
+                self.layers[i].layer.bias.requires_grad_(False)
 
     def back_sub_layers(self, layer_index, size_input):
         """ Implements backsubstitution up to the layer layer_index
@@ -187,6 +195,9 @@ class AbstractFullyConnected(nn.Module):
         high = self.layers[0](high)
         high = self.layers[1](high).squeeze()
 
+        self.lows = []
+        self.highs = []
+        self.activations = []
 
         self.lows+=[low]
         self.highs+=[high]
@@ -205,14 +216,23 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def get_lamdas(self):
-        """ Returns the lamdas of all the ReLus in the net"""
-        pass
+    def clamp_lamdas(self):
+        """ Clamp the value of the lamdas for all the ReLus
+        in the net to the range [0,1]"""
+        for layer in self.layers:
+            if type(layer) == AbstractRelu:
+                new_lamda = layer.lamda.clone()
+                new_lamda.clamp_(min=0, max=1)
+                layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
+                #print(layer.lamda)
 
-    def set_lamdas(self, new_lamdas):
-        """ Sets the value of the lamdas for all the ReLus
-        in the net to the given values"""
-        pass
+    def activate_lamdas(self):
+        """ Clamp the value of the lamdas for all the ReLus
+        in the net to the range [0,1]"""
+        for layer in self.layers:
+            if type(layer) == AbstractRelu:
+                layer.activate_lamda_update()
+
 
     def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, bias_high, high=True):
         """ Computes matrix multiplication for backsubstitution
@@ -370,7 +390,7 @@ class AbstractConv(nn.Module):
         for n_channels, kernel_size, stride, padding in conv_layers:
             layers += [
                 AbstractConvLayer(prev_channels, n_channels, kernel_size, stride=stride, padding=padding, input_dim = img_dim),
-                AbstractRelu()
+                AbstractRelu(img_dim // stride)
             ]
             prev_channels = n_channels
             img_dim = img_dim // stride
@@ -380,7 +400,7 @@ class AbstractConv(nn.Module):
         for i, fc_size in enumerate(fc_layers):
             layers += [AbstractLinear(prev_fc_size, fc_size)]
             if i + 1 < len(fc_layers):
-                layers += [AbstractRelu()]
+                layers += [AbstractRelu(fc_size)]
             prev_fc_size = fc_size
         self.layers = nn.Sequential(*layers)
 
@@ -410,13 +430,12 @@ class AbstractConv(nn.Module):
             layers_biases += [bias]
 
         FCnet = AbstractFullyConnected(device, self.input_size, layers_dims).to(device)
-        FCnet.requires_grad = False
         # finally load the weights
         cnt = 0
         for layer in FCnet.layers:
             if type(layer) == AbstractLinear:
-                layer.layer.weight = torch.nn.Parameter(layers_weights[cnt])
-                layer.layer.bias = torch.nn.Parameter(layers_biases[cnt])
+                layer.layer.weight = torch.nn.Parameter(layers_weights[cnt], requires_grad=False)
+                layer.layer.bias = torch.nn.Parameter(layers_biases[cnt], requires_grad=False)
                 cnt +=1
 
         return FCnet
