@@ -3,15 +3,18 @@ import torch
 import time
 from networks import FullyConnected, Conv
 from abstract_nets import AbstractFullyConnected, AbstractConv
+import signal
+from contextlib import contextmanager
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 # Warning we get: (torch 1.7 on) .../torch/autograd/__init__.py:132: UserWarning: CUDA initialization: Found no NVIDIA driver on your system. Please check that you have an NVIDIA GPU and installed a driver from http://www.nvidia.com/Download/index.aspx (Triggered internally at  /pytorch/c10/cuda/CUDAFunctions.cpp:100.
 
 DEVICE = 'cpu'
 INPUT_SIZE = 28
-NUM_EPOCHS = 5
-LEARNING_RATE = 10e-3
+NUM_EPOCHS = 100 # number insanely high to make the code loop
+LEARNING_RATE = 1
 MOMENTUM = 0.9
+MAX_TIME = 180
 
 class LamdaLoss(torch.nn.Module):
     """ Custom loss function to optimise the lamdas"""
@@ -47,7 +50,7 @@ def prepare_input_verifier(inputs, eps):
 def update_lamdas(inputs, low_orig, high_orig, net, right_class):
     """ Wrapping function for all the operation necessary
     to make an optimization step for the lamdas"""
-
+    scaling_factor = (len(net.layers) - 2)/2 # to account for small signals in deeper nets
     outputs, low, high = net(inputs, low_orig, high_orig)
     loss = LamdaLoss().to(DEVICE)
     loss_value = loss(low, high, right_class)
@@ -55,8 +58,11 @@ def update_lamdas(inputs, low_orig, high_orig, net, right_class):
     optimizer.zero_grad()
     loss_value.backward()
     optimizer.step()
+    # note: the lamdas have to be between 0 and 1, hence we
+    # cannot simply update them with a gradient descent step
+    # - we also need to project back to the [0, 1] box
+    net.clamp_lamdas()
     return outputs, low, high
-
 
 
 def analyze(net, inputs, eps, true_label):
@@ -100,8 +106,8 @@ def analyze(net, inputs, eps, true_label):
     backsub_order = None
     with torch.no_grad():
         low_bs, high_bs = net.back_sub(true_label=true_label, order=backsub_order)
-    # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-    verified = (low_bs.detach().numpy() > 0).all()
+        # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+        verified = (low_bs.detach().numpy() > 0).all()
     end = time.time()
     print("Time to backsubstitute: " + str(round(end - start, 3)))
     if verified: return verified
@@ -118,24 +124,17 @@ def analyze(net, inputs, eps, true_label):
         assert pred_label == true_label     #check that only the lamdas have been changed.
         verified = sum((low[true_label] > high).int()) == 9
         if verified: return verified
-        # note: the lamdas have to be between 0 and 1, hence we
-        # cannot simply update them with a gradient descent step
-        # - we also need to project back to the [0, 1] box
-        net.clamp_lamdas()
+        backsub_order = None
+        with torch.no_grad():
+            low_bs, high_bs = net.back_sub(true_label=true_label, order=backsub_order)
+            # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+        verified = (low_bs.detach().numpy() > 0).all()
+        if verified: return verified
         end = time.time()
         print("Time: " + str(round(end - start, 3)))
-    end = time.time()
-    print("Second time to propagate: "+str(round(end-start,3)))
-
-    # 6. Backsubstitute if the property is not verified, otherwise return
-    #net.reset_lamdas()
-    backsub_order = None
-    with torch.no_grad():
-        low, high = net.back_sub(true_label = true_label, order=backsub_order)
-    # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-    verified = (low.detach().numpy()>0).all()
-    end = time.time()
-    print("Time to backsubstitute: "+str(round(end-start,3)))
+        if(round(end - start,3)>MAX_TIME): # we're going to go over the limit with next iteration
+            print("Timeout!")
+            return verified
     return verified
 
 

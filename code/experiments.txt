@@ -1,0 +1,39 @@
+Idea: keep track of the things we notice when running experiments
+
+Table of experiments
+----------------------
+1.
+NUM_EPOCHS = 5
+LEARNING_RATE = 10e-3
+MOMENTUM = 0.9
+Comments: the change in lamdas is small ---> try with more epochs or bigger learning rate
+We verify: classic DP and fc4/1
+----------------------
+2.
+NUM_EPOCHS = 5
+LEARNING_RATE = 1
+MOMENTUM = 0.9
+Comments: Change in lamdas is now big (if starting from 1 they almost get to 0) ---> maybe
+some examples need more epochs than others: timed loop? Or maybe they need smaller updates
+IDEA! The deeper your net, the less influencial each lamda is on the final result --> small
+signal from the gradient ---> compensate with a scaling factor
+Also: last backsubstitution never helping --> remove it?
+We verify: classic DP + fc2/1 + fc4/0 + fc4/1 + fc7/1
+----------------------
+3.
+NUM_EPOCHS = 100 # number insanely high to make the code loop
+LEARNING_RATE = 1
+MOMENTUM = 0.9
+MAX_TIME = 180
+scaling_factor = (len(net.layers) - 2)/2 # to account for small signals in deeper nets
+Comments: we lose some of the previously verified nets (fc2/1 and fc4/0 and 1): continue to loop,
+with lamda values oscillating ---> scaling factor makes step size too big
+----------------------
+4.
+NUM_EPOCHS = 100 # number insanely high to make the code loop
+LEARNING_RATE = 1
+MOMENTUM = 0.9
+MAX_TIME = 180
+scaling_factor = None
+Comments: we now verify again the following nets
+Verify: classic DP + fc2/1 + fc4/0 + fc4/1 + fc7/1

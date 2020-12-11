@@ -138,7 +138,8 @@ class AbstractFullyConnected(nn.Module):
     def back_sub_layers(self, layer_index, size_input):
         """ Implements backsubstitution up to the layer layer_index
         """
-
+        #TODO: make this function faster by saving preious layers backsub results
+        #TODO: remove duplicated code and summarise backsub into a single function
         low = self.lows[0]
         high = self.highs[0]
 
@@ -208,6 +209,8 @@ class AbstractFullyConnected(nn.Module):
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
             if type(layer)==AbstractLinear:
+                # note: even though we backsubstitute at each affine,
+                # there is still a dependency on the lamdas
                low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
             self.lows+=[low]
             self.highs+=[high]
@@ -232,7 +235,6 @@ class AbstractFullyConnected(nn.Module):
         for layer in self.layers:
             if type(layer) == AbstractRelu:
                 layer.activate_lamda_update()
-
 
     def back_sub_relu(self, back_sub_matrix, relu_high_matrix, relu_low_matrix, bias_high, high=True):
         """ Computes matrix multiplication for backsubstitution
