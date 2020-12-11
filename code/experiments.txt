@@ -36,4 +36,5 @@ MOMENTUM = 0.9
 MAX_TIME = 180
 scaling_factor = None
 Comments: we now verify again the following nets
-Verify: classic DP + fc2/1 + fc4/0 + fc4/1 + fc7/1
+Verify: classic DP + fc2/1 + fc4/0 + fc4/1 + fc5/1 + fc7/0 + fc7/1
+Missing to verify: fc5/0, fc6/1, conv2/0 and 1
