@@ -21,13 +21,27 @@ class LamdaLoss(torch.nn.Module):
     def __init__(self):
         super(LamdaLoss, self).__init__()
 
+    # @staticmethod
+    # def forward(last_low, last_high, right_class):
+    #     """ Compute the loss on the lamdas as the sum of the width of the
+    #     last layers' neurons' bounds"""
+    #     assert (last_high>=last_low).all(), "Error with the box bounds: low>high"
+    #     loss = max(torch.cat([last_high[0:right_class], last_high[right_class+1:]])) - last_low[right_class]
+    #     return loss
+
     @staticmethod
     def forward(last_low, last_high, right_class):
-        """ Compute the loss on the lamdas as the sum of the width of the
-        last layers' neurons' bounds"""
-        assert (last_high>=last_low).all(), "Error with the box bounds: low>high"
-        loss = max(torch.cat([last_high[0:right_class], last_high[right_class+1:]])) - last_low[right_class]
-        return loss
+        assert (last_high >= last_low).all(), "Error with the box bounds: low>high"
+        values = torch.zeros(10)
+        values[0:right_class] = last_high[0:right_class]
+        values[right_class]= last_low[right_class]
+        values[right_class+1:] = last_high[right_class+1:]
+        softmax = torch.nn.Softmax()
+        output = softmax(values).view(1,-1)
+        loss = torch.nn.CrossEntropyLoss()
+        loss_out = loss(output, torch.tensor[right_class])
+        return loss_out
+
 
 def prepare_input_verifier(inputs, eps):
     """ 
