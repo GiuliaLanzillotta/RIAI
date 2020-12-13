@@ -36,10 +36,8 @@ class LamdaLoss(torch.nn.Module):
         values[0:right_class] = last_high[0:right_class]
         values[right_class]= last_low[right_class]
         values[right_class+1:] = last_high[right_class+1:]
-        softmax = torch.nn.Softmax()
-        output = softmax(values).unsqueeze(0)
         loss = torch.nn.CrossEntropyLoss()
-        loss_out = loss(output, torch.tensor([right_class]))
+        loss_out = loss(values.unsqueeze(0), torch.tensor([right_class]))
         return loss_out
 
 
