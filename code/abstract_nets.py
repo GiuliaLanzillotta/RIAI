@@ -222,10 +222,15 @@ class AbstractFullyConnected(nn.Module):
     def clamp_lamdas(self):
         """ Clamp the value of the lamdas for all the ReLus
         in the net to the range [0,1]"""
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             if type(layer) == AbstractRelu:
                 new_lamda = layer.lamda.clone()
                 new_lamda.clamp_(min=0, max=1)
+                if i == len(self.layers)-2:
+                    print(new_lamda)
+                # new_lamda[new_lamda<0.5] = 0
+                # new_lamda[new_lamda >= 0.5] = 1
+                # print(new_lamda)
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
                 #print(layer.lamda)
 

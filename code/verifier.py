@@ -128,9 +128,9 @@ def analyze(net, inputs, eps, true_label):
     # 5. Update the lamdas to optimise our loss and try to verify again
     start = time.time()
     print("Optimising the lamdas...")
+    net.activate_lamdas()
     for epoch in range(NUM_EPOCHS):
         print("Epoch "+str(epoch))
-        net.activate_lamdas()
         outputs, low, high = update_lamdas(inputs, low_orig, high_orig, net, true_label)
         pred_label = outputs.max(dim=0)[1].item()
         assert pred_label == true_label     #check that only the lamdas have been changed.
