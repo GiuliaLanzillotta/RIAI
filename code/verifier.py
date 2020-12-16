@@ -62,7 +62,8 @@ class LamdaOptimiser():
 
         self.get_lamdas()
 
-        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
+        #self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
+        self.optimizer = torch.optim.SparseAdam(self.lamdas, lr=LEARNING_RATE)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
 
     def get_lamdas(self):
@@ -87,10 +88,12 @@ class LamdaOptimiser():
         for lamda in self.lamdas:
             if epoch == 0:
                 new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
-            elif epoch == 1:
-                new_lamda = lamda - 0.25 * lamda.grad.sign()
+            # elif epoch == 1:
+            #     new_lamda = lamda - 0.25 * lamda.grad.sign()
+            # else:
+            #     new_lamda = lamda - max(0.2, (1/epoch))*lamda.grad
             else:
-                new_lamda = lamda - max(0.2, (1/epoch))*lamda.grad
+                self.optimizer.step()
 
             new_lamdas += [new_lamda]
 

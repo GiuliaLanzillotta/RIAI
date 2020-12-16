@@ -229,7 +229,7 @@ class AbstractFullyConnected(nn.Module):
                 #    print(new_lamda)
                 # new_lamda[new_lamda<0.5] = 0
                 # new_lamda[new_lamda >= 0.5] = 1
-                print(new_lamda)
+                #print(new_lamda)
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
                 #print(layer.lamda)
                 i+=1
