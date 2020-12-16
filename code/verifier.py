@@ -58,40 +58,42 @@ class LamdaOptimiser():
 
         self.loss = LamdaLoss().to(DEVICE)
 
-        self.get_lamdas()
-
-        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
+        #self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
+        #self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
 
     def get_lamdas(self):
         # extract all the lamdas from the net
         self.lamdas = []
         for layer in self._net.layers:
             if type(layer) == AbstractRelu:
-                self.lamdas += [layer.lamda]
+                self.lamdas += [layer.lamda[layer.is_lamda_crossing]]
 
     def update_lamdas(self, backsub_order=None):
         """ Wrapping function for all the operation necessary
         to make an optimization step for the lamdas"""
         outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
         # get even tighter bounds
+
         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
         loss_value = self.loss(low, high, self._true_label)
+        self.get_lamdas() # now we know which ones are crossing or not
+        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
 
 
         self.optimizer.zero_grad()
         loss_value.backward()
+        """
         new_lamdas = []
         for lamda in self.lamdas:
             new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
             new_lamdas += [new_lamda]
-
-        #self.optimizer.step()
+        """
+        self.optimizer.step()
         # note: the lamdas have to be between 0 and 1, hence we
         # cannot simply update them with a gradient descent step
         # - we also need to project back to the [0, 1] box
-        self._net.clamp_lamdas(new_lamdas)
-        self.get_lamdas()
+        self._net.clamp_lamdas()
+        #self.get_lamdas()
         return outputs, low, high
 
     def optimise(self):
