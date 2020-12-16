@@ -70,7 +70,7 @@ class LamdaOptimiser():
             if type(layer) == AbstractRelu:
                 self.lamdas += [layer.lamda]
 
-    def update_lamdas(self, backsub_order=None):
+    def update_lamdas(self, backsub_order=None, epoch = 0):
         """ Wrapping function for all the operation necessary
         to make an optimization step for the lamdas"""
         outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
@@ -83,7 +83,13 @@ class LamdaOptimiser():
         loss_value.backward()
         new_lamdas = []
         for lamda in self.lamdas:
-            new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
+            if epoch == 0:
+                new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
+            elif epoch == 1:
+                new_lamda = lamda - 0.5 * lamda.grad.sign()
+            else:
+                new_lamda = lamda - max(0.2, (1/epoch))*lamda.grad
+
             new_lamdas += [new_lamda]
 
         #self.optimizer.step()
@@ -102,7 +108,7 @@ class LamdaOptimiser():
 
             print("Epoch " + str(epoch))
             backsub_order = None # I initialise it here because we may want to add a per epoch logic for this
-            outputs, low, high = self.update_lamdas(backsub_order)
+            outputs, low, high = self.update_lamdas(backsub_order, epoch = epoch)
             #         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
             verified = (low.detach().numpy() > 0).all()
             pred_label = outputs.max(dim=0)[1].item()
