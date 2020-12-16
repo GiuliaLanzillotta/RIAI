@@ -40,3 +40,7 @@ Verify: classic DP + fc2/1 + fc4/0 + fc4/1 + fc5/1 + fc7/0 + fc7/1
 Missing to verify: fc5/0, fc6/1, conv2/0 and 1
 -------------------------
 Only change is to Loss which is now X-entropy. Same results, Conv2 could not run
+------------------------
+Tried temoving the backsub by layers.
+We verify only: fc1 (0 and 1), fc4 1, fc7 1
+------------------------

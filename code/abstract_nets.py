@@ -138,8 +138,6 @@ class AbstractFullyConnected(nn.Module):
     def back_sub_layers(self, layer_index, size_input):
         """ Implements backsubstitution up to the layer layer_index
         """
-        #TODO: make this function faster by saving preious layers backsub results
-        #TODO: remove duplicated code and summarise backsub into a single function
         low = self.lows[0]
         high = self.highs[0]
 
@@ -219,20 +217,22 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def clamp_lamdas(self):
+    def clamp_lamdas(self, new_lamdas):
         """ Clamp the value of the lamdas for all the ReLus
         in the net to the range [0,1]"""
-        for i, layer in enumerate(self.layers):
+        i = 0
+        for layer in self.layers:
             if type(layer) == AbstractRelu:
-                new_lamda = layer.lamda.clone()
+                new_lamda = new_lamdas[i].clone()
                 new_lamda.clamp_(min=0, max=1)
-                if i == len(self.layers)-2:
-                    print(new_lamda)
+                #if i == len(self.layers)-2:
+                #    print(new_lamda)
                 # new_lamda[new_lamda<0.5] = 0
                 # new_lamda[new_lamda >= 0.5] = 1
-                # print(new_lamda)
+                print(new_lamda)
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
                 #print(layer.lamda)
+                i+=1
 
     def activate_lamdas(self):
         """ Clamp the value of the lamdas for all the ReLus
@@ -256,7 +256,10 @@ class AbstractFullyConnected(nn.Module):
             if relu_high_factor !=0: # otherwise we keep the default
                 for i in range(out_dim): # for each row in the column
                     entry = back_sub_matrix[i,j]
-                    if entry>0:
+                    if entry == 0:
+                        output_matrix[i, j] = 0
+                        bias_vector[i] += 0
+                    elif entry>0:
                         if high:
                             output_matrix[i,j] = entry*relu_high_factor
                             bias_vector[i] += entry*bias_high[j]

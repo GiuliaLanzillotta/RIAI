@@ -2,7 +2,7 @@ import argparse
 import torch
 import time
 from networks import FullyConnected, Conv
-from abstract_nets import AbstractFullyConnected, AbstractConv
+from abstract_nets import AbstractFullyConnected, AbstractConv, AbstractRelu
 import signal
 from contextlib import contextmanager
 import warnings
@@ -15,6 +15,7 @@ NUM_EPOCHS = 100 # number insanely high to make the code loop
 LEARNING_RATE = 1
 MOMENTUM = 0.9
 MAX_TIME = 180
+GAMMA = 0.95
 
 class LamdaLoss(torch.nn.Module):
     """ Custom loss function to optimise the lamdas"""
@@ -32,13 +33,89 @@ class LamdaLoss(torch.nn.Module):
     @staticmethod
     def forward(last_low, last_high, right_class):
         assert (last_high >= last_low).all(), "Error with the box bounds: low>high"
+        """
+        Loss to apply when we are not backsubstituting
         values = torch.zeros(10)
         values[0:right_class] = last_high[0:right_class]
         values[right_class]= last_low[right_class]
         values[right_class+1:] = last_high[right_class+1:]
         loss = torch.nn.CrossEntropyLoss()
         loss_out = loss(values.unsqueeze(0), torch.tensor([right_class]))
+        """
+        loss_out = torch.sum(-1*last_low)
         return loss_out
+
+
+class LamdaOptimiser():
+    """ class that contains all the optimisation logic for the lamdas"""
+    def __init__(self, inputs, low_orig, high_orig, net, true_label, start_time):
+        self._inputs = inputs
+        self._low_orig = low_orig
+        self._high_orig = high_orig
+        self._net = net
+        self._true_label = true_label
+        self._start_time = start_time
+
+        self.loss = LamdaLoss().to(DEVICE)
+
+        self.get_lamdas()
+
+        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
+
+    def get_lamdas(self):
+        # extract all the lamdas from the net
+        self.lamdas = []
+        for layer in self._net.layers:
+            if type(layer) == AbstractRelu:
+                self.lamdas += [layer.lamda]
+
+    def update_lamdas(self, backsub_order=None):
+        """ Wrapping function for all the operation necessary
+        to make an optimization step for the lamdas"""
+        outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
+        # get even tighter bounds
+        low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
+        loss_value = self.loss(low, high, self._true_label)
+
+
+        self.optimizer.zero_grad()
+        loss_value.backward()
+        new_lamdas = []
+        for lamda in self.lamdas:
+            new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
+            new_lamdas += [new_lamda]
+
+        #self.optimizer.step()
+        # note: the lamdas have to be between 0 and 1, hence we
+        # cannot simply update them with a gradient descent step
+        # - we also need to project back to the [0, 1] box
+        self._net.clamp_lamdas(new_lamdas)
+        self.get_lamdas()
+        return outputs, low, high
+
+    def optimise(self):
+        """ Main optimisation loop"""
+        verified = False
+        epoch = 0
+        while not verified:
+
+            print("Epoch " + str(epoch))
+            backsub_order = None # I initialise it here because we may want to add a per epoch logic for this
+            outputs, low, high = self.update_lamdas(backsub_order)
+            #         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
+            verified = (low.detach().numpy() > 0).all()
+            pred_label = outputs.max(dim=0)[1].item()
+            assert pred_label == self._true_label #check that only the lamdas have been changed.
+
+            epoch +=1
+            end = time.time()
+            print("Time: " + str(round(end - self._start_time, 3)))
+            if (round(end - self._start_time, 3) > MAX_TIME):  # we're going to go over the limit with next iteration
+                print("Timeout!")
+                break
+
+        return verified
 
 
 def prepare_input_verifier(inputs, eps):
@@ -58,24 +135,6 @@ def prepare_input_verifier(inputs, eps):
     low = torch.max(inputs - eps, torch.tensor(0.0)).to(DEVICE) # may we should limit this to something very small instead than 0?
     high = torch.min(inputs + eps, torch.tensor(1.0)).to(DEVICE)
     return inputs, low, high
-
-def update_lamdas(inputs, low_orig, high_orig, net, right_class):
-    """ Wrapping function for all the operation necessary
-    to make an optimization step for the lamdas"""
-    scaling_factor = (len(net.layers) - 2)/2 # to account for small signals in deeper nets
-    outputs, low, high = net(inputs, low_orig, high_orig)
-    loss = LamdaLoss().to(DEVICE)
-    loss_value = loss(low, high, right_class)
-    optimizer = torch.optim.SGD(net.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM)
-    optimizer.zero_grad()
-    loss_value.backward()
-    optimizer.step()
-    # note: the lamdas have to be between 0 and 1, hence we
-    # cannot simply update them with a gradient descent step
-    # - we also need to project back to the [0, 1] box
-    net.clamp_lamdas()
-    return outputs, low, high
-
 
 def analyze(net, inputs, eps, true_label):
     """
@@ -100,53 +159,30 @@ def analyze(net, inputs, eps, true_label):
     # 1. Define the input box - the format should be defined by us 
     # as it will be used by our propagation function. 
     inputs, low_orig, high_orig = prepare_input_verifier(inputs, eps)
-    # 2. Propagate the region across the net
-    outputs, low, high = net(inputs, low_orig, high_orig)
+    with torch.no_grad():
+        # 2. Propagate the region across the net
+        outputs, low, high = net(inputs, low_orig, high_orig)
     pred_label = outputs.max(dim=0)[1].item()
     assert pred_label == true_label
-    # 3. Verify the property 
-    # in order to always predict the right label in this perturbation 
-    # zone the logits for the right label need to always be 
-    # higher than the logits for all the other labels
+    # 3. Verify the property
     verified = sum((low[true_label]>high).int())==9
     end = time.time()
-    print("Time to propagate: "+str(round(end-start,3)))
+    print("Propagation done. Time : "+str(round(end-start,3)))
     if verified: return verified
-
     # 4. Backsubstitute if the property is not verified, otherwise return
-    # net.reset_lamdas()
     backsub_order = None
     with torch.no_grad():
-        low_bs, high_bs = net.back_sub(true_label=true_label, order=backsub_order)
-        # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-        verified = (low_bs.detach().numpy() > 0).all()
+        low, high = net.back_sub(true_label=true_label, order=backsub_order)
+    # for the property to be verified we want all the entries of (y_true - y_j) to be positive
+    verified = (low.detach().numpy() > 0).all()
     end = time.time()
-    print("Time to backsubstitute: " + str(round(end - start, 3)))
+    print("Backsubstitution done. Time : " + str(round(end - start, 3)))
     if verified: return verified
-
-
     # 5. Update the lamdas to optimise our loss and try to verify again
-    start = time.time()
     print("Optimising the lamdas...")
     net.activate_lamdas()
-    for epoch in range(NUM_EPOCHS):
-        print("Epoch "+str(epoch))
-        outputs, low, high = update_lamdas(inputs, low_orig, high_orig, net, true_label)
-        pred_label = outputs.max(dim=0)[1].item()
-        assert pred_label == true_label     #check that only the lamdas have been changed.
-        verified = sum((low[true_label] > high).int()) == 9
-        if verified: return verified
-        backsub_order = None
-        with torch.no_grad():
-            low_bs, high_bs = net.back_sub(true_label=true_label, order=backsub_order)
-            # for the property to be verified we want all the entries of (y_true - y_j) to be positive
-        verified = (low_bs.detach().numpy() > 0).all()
-        if verified: return verified
-        end = time.time()
-        print("Time: " + str(round(end - start, 3)))
-        if(round(end - start,3)>MAX_TIME): # we're going to go over the limit with next iteration
-            print("Timeout!")
-            return verified
+    lamda_optimiser = LamdaOptimiser(inputs, low_orig, high_orig, net, true_label, start)
+    verified = lamda_optimiser.optimise()
     return verified
 
 
