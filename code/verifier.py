@@ -42,7 +42,9 @@ class LamdaLoss(torch.nn.Module):
         loss = torch.nn.CrossEntropyLoss()
         loss_out = loss(values.unsqueeze(0), torch.tensor([right_class]))
         """
-        loss_out = torch.sum(max(0,(1-1*[last_low[i] for i in len(last_low)])))
+        unit = torch.ones_like(last_low)
+        zero = torch.zeros_like(last_low)
+        loss_out = torch.sum(torch.maximum(zero,(unit-1*last_low)))
         return loss_out
 
 
