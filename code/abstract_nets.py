@@ -60,11 +60,7 @@ class AbstractRelu(nn.Module):
         self.size = input_dim
         self.lamda = torch.zeros(input_dim)
         self.is_lamda_active = False
-        self.is_lamda_crossing = torch.zeros_like(self.lamda, requires_grad=False).bool()
 
-    def reset_crossing(self):
-        """ To be called at the beginning of the propagation through the net"""
-        self.is_lamda_crossing = torch.zeros_like(self.lamda, requires_grad=False).bool()
 
     def activate_lamda_update(self):
         self.lamda = torch.nn.Parameter(self.lamda, requires_grad=True)
@@ -101,7 +97,6 @@ class AbstractRelu(nn.Module):
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
-                self.is_lamda_crossing[i] = True
                 self.deepPoly(high[i], low[i], i) # modify weights
             elif high[i] <= 0:
                 self.weight_high[i, i] = 0
@@ -179,13 +174,6 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
-    def reset_crossing_lamdas(self):
-        """ Reset the crossing lamda flag.
-        To be called in each forward pass"""
-        for layer in self.layers:
-            if type(layer) == AbstractRelu:
-                layer.reset_crossing()
-
     def forward(self, x, low, high):
         """
         Propagation of abstract area through the network. 
@@ -206,11 +194,13 @@ class AbstractFullyConnected(nn.Module):
         high = self.layers[0](high)
         high = self.layers[1](high).squeeze()
 
-        self.lows=[low]
-        self.highs=[high]
-        self.activations=[x]
+        self.lows = []
+        self.highs = []
+        self.activations = []
 
-        self.reset_crossing_lamdas()
+        self.lows+=[low]
+        self.highs+=[high]
+        self.activations+=[x]
         #now the rest of the layers
         for i, layer in enumerate(self.layers):
             if i in [0,1]: continue # skipping the ones we already computed 
@@ -227,23 +217,26 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def clamp_lamdas(self):
+    def clamp_lamdas(self, new_lamdas):
         """ Clamp the value of the lamdas for all the ReLus
         in the net to the range [0,1]"""
         i = 0
         for layer in self.layers:
             if type(layer) == AbstractRelu:
-                new_lamda = layer.lamda.clone()
+                new_lamda = new_lamdas[i].clone()
                 new_lamda.clamp_(min=0, max=1)
-                # we only update the part of the lamda that is crossing
-                #lamdas = layer.lamda.clone()
-                #lamdas[layer.is_lamda_crossing] = new_lamda
+                #if i == len(self.layers)-2:
+                #    print(new_lamda)
+                # new_lamda[new_lamda<0.5] = 0
+                # new_lamda[new_lamda >= 0.5] = 1
+                print(new_lamda)
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
                 #print(layer.lamda)
                 i+=1
 
     def activate_lamdas(self):
-        """ Activate the lamda value """
+        """ Clamp the value of the lamdas for all the ReLus
+        in the net to the range [0,1]"""
         for layer in self.layers:
             if type(layer) == AbstractRelu:
                 layer.activate_lamda_update()
@@ -258,28 +251,14 @@ class AbstractFullyConnected(nn.Module):
         # now we want to go into each entry in the back_sub matrix
         # and multiply it by the respective relu weight
         for j in range(in_dim):# for each column of the matrix
-
-            if relu_high_matrix[j,j] == 0: continue
-            col = back_sub_matrix[:,j]
-            low_vec = torch.ones_like(col)*relu_low_matrix[j,j]
-            high_vec = torch.ones_like(col)*relu_high_matrix[j,j]
-            mask_neg = (col < 0).int()
-            mask_pos = (col >= 0).int()
-            if high:
-                final_vec = torch.multiply(mask_neg, low_vec) + torch.multiply(mask_pos, high_vec)
-                bias_vector += col * mask_pos * bias_high[j]
-            else:
-                final_vec = torch.multiply(mask_neg, high_vec) + torch.multiply(mask_pos, low_vec)
-                bias_vector += col * mask_neg * bias_high[j]
-            output_matrix[:,j] = col * final_vec
-
-            """
             relu_high_factor = relu_high_matrix[j,j]
             relu_low_factor = relu_low_matrix[j,j]
             if relu_high_factor !=0: # otherwise we keep the default
                 for i in range(out_dim): # for each row in the column
                     entry = back_sub_matrix[i,j]
-                    if entry == 0: continue
+                    if entry == 0:
+                        output_matrix[i, j] = 0
+                        bias_vector[i] += 0
                     elif entry>0:
                         if high:
                             output_matrix[i,j] = entry*relu_high_factor
@@ -290,7 +269,6 @@ class AbstractFullyConnected(nn.Module):
                         else:
                             output_matrix[i,j] = entry*relu_high_factor
                             bias_vector[i] += entry * bias_high[j]
-            """
         return output_matrix, bias_vector
 
     def back_sub(self, true_label, order=None):
