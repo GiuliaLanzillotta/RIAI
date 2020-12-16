@@ -60,16 +60,14 @@ class LamdaOptimiser():
 
         self.loss = LamdaLoss().to(DEVICE)
 
-<<<<<<< HEAD
         #self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
         #self.optimizer = torch.optim.SparseAdam(self.lamdas, lr=LEARNING_RATE)
         #self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
-=======
         self.get_lamdas()
 
         self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
->>>>>>> parent of 411af06... crossing lamdas (1)
+
 
     def get_lamdas(self):
         # extract all the lamdas from the net
@@ -135,16 +133,16 @@ class LamdaOptimiser():
 
 
 def prepare_input_verifier(inputs, eps):
-    """ 
-    This function computes the input to the verifier. 
-    Given an input image and a noise level it computes the range 
-    of values for every pixel. 
-    From the task description: 
-    'Note that images have pixel intensities between 0 and 1, 
-    e.g. if perturbation is 0.2 and pixel has value 0.9 then you only 
-    have to verify range [0.7, 1.0] for intensities of this pixel, 
+    """
+    This function computes the input to the verifier.
+    Given an input image and a noise level it computes the range
+    of values for every pixel.
+    From the task description:
+    'Note that images have pixel intensities between 0 and 1,
+    e.g. if perturbation is 0.2 and pixel has value 0.9 then you only
+    have to verify range [0.7, 1.0] for intensities of this pixel,
     instead of [0.7, 1.1]'
-    
+
     """
     # inputs has shape (1,1,28,28)
     # hence also eps has the same shape
@@ -154,26 +152,26 @@ def prepare_input_verifier(inputs, eps):
 
 def analyze(net, inputs, eps, true_label):
     """
-        This function should run the DeepPoly relaxation on the L infinity 
-        ball of radius epsilon around the input and verify whether the net 
-        would always output the right label. 
+        This function should run the DeepPoly relaxation on the L infinity
+        ball of radius epsilon around the input and verify whether the net
+        would always output the right label.
 
         [input +-eps] --> [y_true-label > y_i] for all i != true-label
 
         Arguments
         ---------
-        net: (nn.Module) - either instance of AbstractFullyConnected or AbstractConv  
+        net: (nn.Module) - either instance of AbstractFullyConnected or AbstractConv
         inputs: (FloatTensor) - shape (1, 1, 28, 28)
         eps: (float) - noise level
-        true_label: (int) - label from 0 to 9  
+        true_label: (int) - label from 0 to 9
 
         Returns
         --------
         (bool) - True if the property is verified
     """
     start = time.time()
-    # 1. Define the input box - the format should be defined by us 
-    # as it will be used by our propagation function. 
+    # 1. Define the input box - the format should be defined by us
+    # as it will be used by our propagation function.
     inputs, low_orig, high_orig = prepare_input_verifier(inputs, eps)
     with torch.no_grad():
         # 2. Propagate the region across the net
@@ -253,7 +251,7 @@ def main():
         assert False
 
 
-    # here we are loading the pre-trained net weights 
+    # here we are loading the pre-trained net weights
     net.load_state_dict(torch.load('../mnist_nets/%s.pt' % args.net, map_location=torch.device(DEVICE)))
     abstract_net.load_weights(net)
     if type(abstract_net)==AbstractConv:
