@@ -88,7 +88,7 @@ class LamdaOptimiser():
             if epoch == 0:
                 new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
             elif epoch == 1:
-                new_lamda = lamda - 0.5 * lamda.grad.sign()
+                new_lamda = lamda - 0.25 * lamda.grad.sign()
             else:
                 new_lamda = lamda - max(0.2, (1/epoch))*lamda.grad
 
