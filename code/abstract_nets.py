@@ -58,17 +58,14 @@ class AbstractRelu(nn.Module):
         super().__init__()
         self.relu = nn.ReLU()
         self.size = input_dim
-        self.lamda = torch.zeros(input_dim)
-        self.is_lamda_active = False
-        self.is_lamda_crossing = torch.zeros_like(self.lamda, requires_grad=False).bool()
-
-    def reset_crossing(self):
-        """ To be called at the beginning of the propagation through the net"""
-        self.is_lamda_crossing = torch.zeros_like(self.lamda, requires_grad=False).bool()
+        self.lamda_list = []
+        self.is_neuron_crossing = torch.zeros(input_dim, requires_grad=False).bool()
 
     def activate_lamda_update(self):
-        self.lamda = torch.nn.Parameter(self.lamda, requires_grad=True)
-        self.is_lamda_active = True
+        # This will be called only after the forward pass, just before backsubstitution
+        self.lamda = torch.nn.Parameter(torch.tensor(self.lamda_list, dtype=torch.float), requires_grad=True)
+        # setting the dependency on the crossing lamda
+        self.weight_low[self.is_neuron_crossing, self.is_neuron_crossing] = self.lamda
 
     @staticmethod
     def val_lamda(low, high):
@@ -77,16 +74,16 @@ class AbstractRelu(nn.Module):
         else:lamda = 1
         return lamda
 
-    def deepPoly(self, high, low, i):
+    def deepPoly(self, high, low, i, crossing_index, initialise=False):
         # compute the upper bound slope and intercept
         ub_slope = high/(high-low) #upper bound slope with capacity to have high=low=0
         ub_int = -(low*high)/(high-low) #intercept of upper bound line
         # save weight and biases for lower and upper bounds
         self.weight_high[i,i] = ub_slope
         self.bias_high[i] = ub_int
-        if not self.is_lamda_active:
-            self.lamda[i] = self.val_lamda(low, high)
-        self.weight_low[i, i] = self.lamda[i]
+        # note: we only call deepPoly when the lamdas are deactivated (because they get deactivated at each forward pass)
+        if initialise: self.lamda_list.insert(crossing_index, self.val_lamda(low, high))
+        self.weight_low[i, i] = torch.tensor(self.lamda_list[crossing_index])
 
     def forward(self, x, low, high):
 
@@ -97,13 +94,15 @@ class AbstractRelu(nn.Module):
         self.bias_low = torch.zeros(input_size)
         self.weight_high = torch.eye(input_size, input_size)
         self.bias_high = torch.zeros(input_size)
-
+        crossings = 0
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
-                self.is_lamda_crossing[i] = True
-                self.deepPoly(high[i], low[i], i) # modify weights
+                self.deepPoly(high[i], low[i], i, crossings, not self.is_neuron_crossing[i]) # modify weights
+                self.is_neuron_crossing[i] = True
+                crossings+=1
             elif high[i] <= 0:
+                #TODO: stop tracking the lamda if it's not crossing anymore
                 self.weight_high[i, i] = 0
                 self.weight_low[i, i] = 0
             else: pass
@@ -210,7 +209,6 @@ class AbstractFullyConnected(nn.Module):
         self.highs=[high]
         self.activations=[x]
 
-        self.reset_crossing_lamdas()
         #now the rest of the layers
         for i, layer in enumerate(self.layers):
             if i in [0,1]: continue # skipping the ones we already computed 
@@ -227,20 +225,20 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def clamp_lamdas(self):
+    def clamp_lamdas(self, new_lamdas):
         """ Clamp the value of the lamdas for all the ReLus
         in the net to the range [0,1]"""
-        i = 0
+        relus = 0
         for layer in self.layers:
             if type(layer) == AbstractRelu:
-                new_lamda = layer.lamda.clone()
+                new_lamda = new_lamdas[relus].clone().detach_()
                 new_lamda.clamp_(min=0, max=1)
-                # we only update the part of the lamda that is crossing
-                #lamdas = layer.lamda.clone()
-                #lamdas[layer.is_lamda_crossing] = new_lamda
+                # we automatically cast it back to a list (ready for the forward pass)
+                layer.lamda_list = list(new_lamda.detach().numpy())
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
-                #print(layer.lamda)
-                i+=1
+                relus += 1
+                #print(layer.weight_low[layer.is_neuron_crossing,layer.is_neuron_crossing])
+                #print(sum(layer.is_neuron_crossing))
 
     def activate_lamdas(self):
         """ Activate the lamda value """
@@ -272,25 +270,6 @@ class AbstractFullyConnected(nn.Module):
                 final_vec = torch.multiply(mask_neg, high_vec) + torch.multiply(mask_pos, low_vec)
                 bias_vector += col * mask_neg * bias_high[j]
             output_matrix[:,j] = col * final_vec
-
-            """
-            relu_high_factor = relu_high_matrix[j,j]
-            relu_low_factor = relu_low_matrix[j,j]
-            if relu_high_factor !=0: # otherwise we keep the default
-                for i in range(out_dim): # for each row in the column
-                    entry = back_sub_matrix[i,j]
-                    if entry == 0: continue
-                    elif entry>0:
-                        if high:
-                            output_matrix[i,j] = entry*relu_high_factor
-                            bias_vector[i] += entry*bias_high[j]
-                        else: output_matrix[i,j] = entry*relu_low_factor
-                    else:
-                        if high: output_matrix[i,j] = entry*relu_low_factor
-                        else:
-                            output_matrix[i,j] = entry*relu_high_factor
-                            bias_vector[i] += entry * bias_high[j]
-            """
         return output_matrix, bias_vector
 
     def back_sub(self, true_label, order=None):
