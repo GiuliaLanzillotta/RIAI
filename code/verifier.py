@@ -73,28 +73,30 @@ class LamdaOptimiser():
         outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
         # get even tighter bounds
         self._net.activate_lamdas()
-
-        """"
-          # now we know which ones are crossing or not
-        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
-        # track the gradients while doing the backsub
-        self.optimizer.zero_grad()
-        """
-        self.get_lamdas()
         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
         loss_value = self.loss(low, high, self._true_label)
+        self.get_lamdas()  # now we know which ones are crossing or not
+        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
+        self.optimizer.zero_grad()
         loss_value.backward()
-
+        '''INCLUDING THE FOLLOWING BUT CAN REMOVE OR COMMENT OUT DEPENDING ON FUTURE USE
         new_lamdas = []
         for lamda in self.lamdas:
-            new_lamda = lamda - LEARNING_RATE * lamda.grad
-            new_lamdas += [new_lamda]
+            if epoch == 0:
+                new_lamda = lamda - LEARNING_RATE * lamda.grad.sign()
+            elif epoch == 1:
+                new_lamda = lamda - 0.5 * lamda.grad.sign()
+            else:
+                new_lamda = lamda# - max(0.2, (1 / epoch)) * lamda.grad
 
-        #self.optimizer.step()
+            new_lamdas += [new_lamda]
+        '''
+
+        self.optimizer.step()
         # note: the lamdas have to be between 0 and 1, hence we
         # cannot simply update them with a gradient descent step
         # - we also need to project back to the [0, 1] box
-        self._net.clamp_lamdas(new_lamdas) # this will make lamda a list again
+        self._net.clamp_lamdas() # this will make lamda a list again
         #self.get_lamdas()
         return outputs, low, high
 

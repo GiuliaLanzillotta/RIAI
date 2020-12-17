@@ -1,12 +1,10 @@
 """ 
-Here we define the classes that we will use to represent abstract networks. 
-An abstract network is a copy of a concrete network implementing abstract transformers 
+Here we define the classes that we will use to represent abstract networks.
+An abstract network is a copy of a concrete network implementing abstract transformers
 for each of the operations defined in the concrete network.
-
-The specifics of the transformers depend on the relaxation in use. In our case 
+The specifics of the transformers depend on the relaxation in use. In our case
 this is polytopes.
-
-This file mimics the structure of the networks.py file. 
+This file mimics the structure of the networks.py file.
 """
 from networks import Normalization
 from torch import nn
@@ -15,17 +13,17 @@ import torch
 DEVICE = 'cpu'
 
 class AbstractLinear(nn.Module):
-    """ Abstract version of linear layer """ 
+    """ Abstract version of linear layer """
     def __init__(self, input_size, output_size):
         super().__init__()
         self.layer = nn.Linear(input_size, output_size)
         self.layer.requires_grad_(False)
-    
+
     @staticmethod
     def forward_boxes(weights, bias, low, high):
         """
-        Implements swapping of lower and higher bounds 
-        where the weights are negative and computes the 
+        Implements swapping of lower and higher bounds
+        where the weights are negative and computes the
         forward pass of box bounds. """
 
         mask_neg = (weights < 0).int()
@@ -35,21 +33,21 @@ class AbstractLinear(nn.Module):
         low_out = (torch.matmul(high, weight_neg.t()) + torch.matmul(low, weight_pos.t()) + bias)
         high_out = (torch.matmul(low, weight_neg.t()) + torch.matmul(high, weight_pos.t()) + bias)
 
-        # quick check here 
+        # quick check here
         assert (low_out <= high_out).all(), "Error with the box bounds: low>high"
 
         return low_out, high_out
 
-    def forward(self, x, low, high): 
-        """ 
-        Specific attention must be payed to the transformation 
-        of box bounds. When working with negative weights low and 
-        high bound must be swapped. 
+    def forward(self, x, low, high):
+        """
+        Specific attention must be payed to the transformation
+        of box bounds. When working with negative weights low and
+        high bound must be swapped.
         """
         x = self.layer(x)
         weights = self.layer.weight
         bias = self.layer.bias
-        low, high = self.forward_boxes(weights, bias, low, high) 
+        low, high = self.forward_boxes(weights, bias, low, high)
         return x, low, high
 
 class AbstractRelu(nn.Module):
@@ -120,7 +118,7 @@ class AbstractFullyConnected(nn.Module):
     """ Abstract version of fully connected network """
     def __init__(self, device, input_size, fc_layers):
         super().__init__()
-        layers = [Normalization(device), 
+        layers = [Normalization(device),
                     nn.Flatten()]
         prev_fc_size = input_size * input_size
         for i, fc_size in enumerate(fc_layers):
@@ -178,6 +176,7 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
+
     def reset_crossing_lamdas(self):
         """ Reset the crossing lamda flag.
         To be called in each forward pass"""
@@ -187,18 +186,17 @@ class AbstractFullyConnected(nn.Module):
 
     def forward(self, x, low, high):
         """
-        Propagation of abstract area through the network. 
-        Parameters: 
-        - x: input 
+        Propagation of abstract area through the network.
+        Parameters:
+        - x: input
         - low: lower bound on input perturbation (epsilon)
-        - high: upper bound on //   // 
+        - high: upper bound on //   //
         note: all the input tensors have shape (1,1,28,28)
-
         """
-        # propagate normally through the first two layers 
-        x = self.layers[0](x) # normalization 
+        # propagate normally through the first two layers
+        x = self.layers[0](x) # normalization
         x = self.layers[1](x).squeeze() # flattening and removing extra dimension
-        # we can safely pass the perturbation boundaries through 
+        # we can safely pass the perturbation boundaries through
         # normalization and flattening (affine transformation is exact)
         low = self.layers[0](low)
         low = self.layers[1](low).squeeze()
@@ -211,7 +209,7 @@ class AbstractFullyConnected(nn.Module):
 
         #now the rest of the layers
         for i, layer in enumerate(self.layers):
-            if i in [0,1]: continue # skipping the ones we already computed 
+            if i in [0,1]: continue # skipping the ones we already computed
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
             if type(layer)==AbstractLinear:
@@ -225,18 +223,16 @@ class AbstractFullyConnected(nn.Module):
 
         return x, low, high
 
-    def clamp_lamdas(self, new_lamdas):
+    def clamp_lamdas(self):
         """ Clamp the value of the lamdas for all the ReLus
         in the net to the range [0,1]"""
-        relus = 0
         for layer in self.layers:
             if type(layer) == AbstractRelu:
-                new_lamda = new_lamdas[relus].clone().detach_()
+                new_lamda = layer.lamda.clone().detach_()
                 new_lamda.clamp_(min=0, max=1)
                 # we automatically cast it back to a list (ready for the forward pass)
                 layer.lamda_list = list(new_lamda.detach().numpy())
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
-                relus += 1
                 #print(layer.weight_low[layer.is_neuron_crossing,layer.is_neuron_crossing])
                 #print(sum(layer.is_neuron_crossing))
 
@@ -450,6 +446,3 @@ class AbstractConv(nn.Module):
                 cnt +=1
 
         return FCnet
-
-
-
