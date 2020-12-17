@@ -45,7 +45,6 @@ class LamdaLoss(torch.nn.Module):
         unit = torch.ones_like(last_low)
         zero = torch.zeros_like(last_low)
         loss_out = torch.sum(torch.maximum(zero,(unit-1*last_low)))
-        #loss_out = torch.sum(- 1 * last_low)
         return loss_out
 
 
@@ -104,6 +103,7 @@ class LamdaOptimiser():
         """ Main optimisation loop"""
         verified = False
         epoch = 0
+        #self._net.reset_crossing_lamdas()
         while not verified:
 
             print("Epoch " + str(epoch))
