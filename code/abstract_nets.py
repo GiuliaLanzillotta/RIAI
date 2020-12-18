@@ -57,7 +57,8 @@ class AbstractRelu(nn.Module):
         self.relu = nn.ReLU()
         self.size = input_dim
         self.lamda_list = []
-        self.lamda_initialisations = torch.zeros(input_dim, requires_grad=False, dtype=torch.float) - 1 # initialise to -1
+        self.is_optimising = False
+        self.lamda_initialisations = torch.zeros(input_dim, requires_grad=False, dtype=torch.float) # initialise to -1
         self.is_neuron_crossing = torch.zeros(input_dim, requires_grad=False).bool()
 
     def activate_lamda_update(self):
@@ -66,21 +67,16 @@ class AbstractRelu(nn.Module):
         # setting the dependency on the crossing lamda
         self.weight_low[self.is_neuron_crossing, self.is_neuron_crossing] = self.lamda
 
-    def reset_crossing(self):
-        self.is_neuron_crossing = torch.zeros(self.size, requires_grad=False).bool()
-        self.lamda_list = []
+    def set_optimising(self):
+        self.is_optimising = True
 
     def val_lamda(self, low, high, i):
         """ Implementing minimum area logic"""
-        if self.lamda_initialisations[i] == -1:
-            # initialising for the first time
-            if low ** 2 > high ** 2:
-                lamda = 0
-            else:
-                lamda = 1
+        if not self.is_optimising:
+            if low ** 2 > high ** 2:lamda = 0
+            else:lamda = 1
             self.lamda_initialisations[i] = lamda
-        else:
-            lamda = self.lamda_initialisations[i]
+        else: lamda = self.lamda_initialisations[i]
         return lamda
 
     def deepPoly(self, high, low, i, crossing_index, initialise=False):
@@ -94,6 +90,7 @@ class AbstractRelu(nn.Module):
         if initialise:
             self.lamda_list.insert(crossing_index, self.val_lamda(low, high, i))
         self.weight_low[i, i] = torch.tensor(self.lamda_list[crossing_index])
+
 
     def forward(self, x, low, high):
 
@@ -114,6 +111,7 @@ class AbstractRelu(nn.Module):
             elif high[i] <= 0:
                 if self.is_neuron_crossing[i]:
                     # remove the lamda from the tracking
+
                     self.lamda_list.pop(crossings)
                     self.is_neuron_crossing[i] = False
                 self.weight_high[i, i] = 0
@@ -128,8 +126,10 @@ class AbstractRelu(nn.Module):
         # compute lower and upper bounds
         # Build the output
         x_out = self.relu(x)
+        self.activate_lamda_update()
         high_out = torch.matmul(self.weight_high,high) + self.bias_high
         low_out = torch.matmul(self.weight_low,low) + self.bias_low
+
 
         return x_out, low_out, high_out
 
@@ -195,13 +195,12 @@ class AbstractFullyConnected(nn.Module):
 
         return low_out, high_out
 
-
-    def reset_crossing_lamdas(self):
+    def set_optimising_relu(self):
         """ Reset the crossing lamda flag.
         To be called in each forward pass"""
         for layer in self.layers:
             if type(layer) == AbstractRelu:
-                layer.reset_crossing()
+                layer.set_optimising()
 
     def forward(self, x, low, high):
         """
@@ -250,11 +249,17 @@ class AbstractFullyConnected(nn.Module):
             if type(layer) == AbstractRelu:
                 new_lamda = layer.lamda.clone().detach_()
                 new_lamda.clamp_(min=0, max=1)
-                layer.lamda_initialisations[layer.is_neuron_crossing] = new_lamda
                 # we automatically cast it back to a list (ready for the forward pass)
                 layer.lamda_list = list(new_lamda.detach().numpy())
-                layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
-
+                layer.lamda_initialisations[layer.is_neuron_crossing] = new_lamda
+                #print(len(layer.lamda_list))
+                """
+                if i==1:
+                    print(len(layer.lamda_list))
+                    print(sum(layer.is_neuron_crossing))
+                    print(layer.lamda)
+                i+=1
+                """
                 #print(layer.weight_low[layer.is_neuron_crossing,layer.is_neuron_crossing])
                 #print(sum(layer.is_neuron_crossing))
 

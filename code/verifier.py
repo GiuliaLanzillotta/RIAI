@@ -66,12 +66,14 @@ class LamdaOptimiser():
             if type(layer) == AbstractRelu:
                 self.lamdas += [layer.lamda]
 
+
+
     def update_lamdas(self, backsub_order=None, epoch=0):
         """ Wrapping function for all the operation necessary
         to make an optimization step for the lamdas"""
         outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
         # get even tighter bounds
-        self._net.activate_lamdas()
+        #self._net.activate_lamdas()
         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
         loss_value = self.loss(low, high, self._true_label)
         self.get_lamdas()  # now we know which ones are crossing or not
@@ -103,7 +105,7 @@ class LamdaOptimiser():
         """ Main optimisation loop"""
         verified = False
         epoch = 0
-        #self._net.reset_crossing_lamdas()
+        self._net.set_optimising_relu()
         while not verified:
 
             print("Epoch " + str(epoch))
