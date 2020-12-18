@@ -12,8 +12,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 DEVICE = 'cpu'
 INPUT_SIZE = 28
 NUM_EPOCHS = 100 # number insanely high to make the code loop
-LEARNING_RATE = 1
-MOMENTUM = 0.9
+LEARNING_RATE = 3
+MOMENTUM = 0.99
 MAX_TIME = 180
 GAMMA = 0.95
 
@@ -44,7 +44,8 @@ class LamdaLoss(torch.nn.Module):
         """
         unit = torch.ones_like(last_low)
         zero = torch.zeros_like(last_low)
-        loss_out = torch.sum(torch.maximum(zero,(unit-1*last_low)))
+        loss_out = torch.sum(torch.maximum(zero,(-1*last_low)))
+        print(last_low)
         return loss_out
 
 
@@ -57,11 +58,11 @@ class LamdaOptimiser():
         self._net = net
         self._true_label = true_label
         self._start_time = start_time
-
         self.loss = LamdaLoss().to(DEVICE)
+        self.lr = LEARNING_RATE
 
         #self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
-        #self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=GAMMA)
+
 
     def get_lamdas(self):
         # extract all the lamdas from the net
@@ -70,16 +71,27 @@ class LamdaOptimiser():
             if type(layer) == AbstractRelu:
                 self.lamdas += [layer.lamda]
 
+    def initialise_lamdas_get_out(self):
+        # extract all the lamdas from the net
+
+        for layer in self._net.layers:
+            if type(layer) == AbstractRelu:
+                layer.initialise_lamda(random_lamdas=torch.rand_like(layer.lamda))
+
     def update_lamdas(self, backsub_order=None, epoch=0):
         """ Wrapping function for all the operation necessary
         to make an optimization step for the lamdas"""
+
+        # if (epoch % 15)== 0 and epoch!=0:
+        #     self.initialise_lamdas_get_out()
+        #     print("reinitialising lamdas")
         outputs, low, high = self._net(self._inputs, self._low_orig, self._high_orig)
         # get even tighter bounds
-
+        self.get_lamdas()  # now we know which ones are crossing or not
+        self.lr = max(0.5,self.lr*GAMMA)
+        self.optimizer = torch.optim.SGD(self.lamdas, lr=self.lr, momentum=MOMENTUM)
         low, high = self._net.back_sub(true_label=self._true_label, order=backsub_order)
         loss_value = self.loss(low, high, self._true_label)
-        self.get_lamdas() # now we know which ones are crossing or not
-        self.optimizer = torch.optim.SGD(self.lamdas, lr=LEARNING_RATE, momentum=MOMENTUM)
         self.optimizer.zero_grad()
         loss_value.backward()
         '''INCLUDING THE FOLLOWING BUT CAN REMOVE OR COMMENT OUT DEPENDING ON FUTURE USE'''
@@ -90,11 +102,13 @@ class LamdaOptimiser():
             elif epoch == 1:
                 new_lamda = lamda - 0.5 * lamda.grad.sign()
             else:
-                new_lamda = lamda# - max(0.2, (1 / epoch)) * lamda.grad
+                new_lamda = lamda - max(0.2, (1 / epoch)) * lamda.grad
 
             new_lamdas += [new_lamda]
 
         self.optimizer.step()
+
+
         # note: the lamdas have to be between 0 and 1, hence we
         # cannot simply update them with a gradient descent step
         # - we also need to project back to the [0, 1] box

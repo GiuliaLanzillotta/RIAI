@@ -68,6 +68,9 @@ class AbstractRelu(nn.Module):
         self.lamda = torch.nn.Parameter(self.lamda, requires_grad=True)
         self.is_lamda_active = True
 
+    def initialise_lamda(self, random_lamdas):
+        self.lamda = torch.nn.Parameter(random_lamdas, requires_grad=True)
+
     @staticmethod
     def val_lamda(low, high):
         """ Implementing minimum area logic"""
@@ -95,7 +98,6 @@ class AbstractRelu(nn.Module):
         self.bias_low = torch.zeros(input_size)
         self.weight_high = torch.eye(input_size, input_size)
         self.bias_high = torch.zeros(input_size)
-
         for i in range(input_size):
             if ((low[i] < 0) * (high[i] > 0)): #crossing ReLU outputs True
                 '''implement forward version of the DeepPoly'''
@@ -109,6 +111,7 @@ class AbstractRelu(nn.Module):
             # so we can just return the input!
         # compute lower and upper bounds
         # Build the output
+        print(sum(self.is_lamda_crossing))
         x_out = self.relu(x)
         high_out = torch.matmul(self.weight_high,high) + self.bias_high
         low_out = torch.matmul(self.weight_low,low) + self.bias_low
@@ -138,18 +141,20 @@ class AbstractFullyConnected(nn.Module):
                 self.layers[i].layer.bias = layer.bias
                 self.layers[i].layer.bias.requires_grad_(False)
 
-    def back_sub_layers(self, layer_index, size_input):
+    def back_sub_layers(self, layer_index, size_input, order = None):
         """ Implements backsubstitution up to the layer layer_index
         """
-        low = self.lows[0]
-        high = self.highs[0]
+        if order == None: order = len(self.layers)-2
+
+        low = self.lows[max(0,layer_index-order-2)]
+        high = self.highs[max(0,layer_index-order-2)]
 
         W_low = torch.eye(size_input, size_input)
         W_high = torch.eye(size_input, size_input)
         bias_high = torch.zeros(size_input)
         bias_low = torch.zeros(size_input)
 
-        for layer in reversed(self.layers[2:layer_index+1]):
+        for layer in reversed(self.layers[max(2,layer_index-order):layer_index+1]):
             if type(layer) == AbstractLinear:
                 W_prime_high = layer.layer.weight
                 b_prime_high = layer.layer.bias
@@ -213,16 +218,44 @@ class AbstractFullyConnected(nn.Module):
             if i in [0,1]: continue # skipping the ones we already computed
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
+
             if type(layer)==AbstractLinear:
                 # note: even though we backsubstitute at each affine,
                 # there is still a dependency on the lamdas
-               low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
+                #print("-" * 20)
+                order = i-2
+                while i-order >= 2:
+                    temp_low, temp_high = self.back_sub_layers(layer_index=i, size_input=x.size()[0], order = order)
+                    #print(low-torch.maximum(low, temp_low))
+                    low = torch.maximum(low, temp_low)
+                    high = torch.minimum(high, temp_high)
+                    order +=2
+
             self.lows+=[low]
             self.highs+=[high]
             self.activations+=[x]
 
 
         return x, low, high
+
+    # def clamp_lamdas(self, new_lamdas):
+    #     """ Clamp the value of the lamdas for all the ReLus
+    #     in the net to the range [0,1]"""
+    #     i = 0
+    #     for layer in self.layers:
+    #         if type(layer) == AbstractRelu:
+    #             new_lamda = new_lamdas[i].clone()
+    #             #new_lamda = layer.lamda.clone()
+    #             #print(new_lamda)
+    #             new_lamda.clamp_(min=0, max=1)
+    #             # we only update the part of the lamda that is crossing
+    #             #lamdas = layer.lamda.clone()
+    #             #lamdas[layer.is_lamda_crossing] = new_lamda
+    #             #print(layer.lamda)
+    #             layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
+    #             #print(layer.lamda)
+    #             #print(layer.lamda)
+    #             i+=1
 
     def clamp_lamdas(self):
         """ Clamp the value of the lamdas for all the ReLus
@@ -232,10 +265,13 @@ class AbstractFullyConnected(nn.Module):
             if type(layer) == AbstractRelu:
                 new_lamda = layer.lamda.clone()
                 new_lamda.clamp_(min=0, max=1)
+                #print(new_lamda[layer.is_lamda_crossing])
                 # we only update the part of the lamda that is crossing
                 #lamdas = layer.lamda.clone()
                 #lamdas[layer.is_lamda_crossing] = new_lamda
+                #print(layer.lamda)
                 layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
+                #print(layer.lamda)
                 #print(layer.lamda)
                 i+=1
 
