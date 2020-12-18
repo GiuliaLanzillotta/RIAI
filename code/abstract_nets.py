@@ -111,7 +111,6 @@ class AbstractRelu(nn.Module):
             elif high[i] <= 0:
                 if self.is_neuron_crossing[i]:
                     # remove the lamda from the tracking
-
                     self.lamda_list.pop(crossings)
                     self.is_neuron_crossing[i] = False
                 self.weight_high[i, i] = 0
@@ -156,18 +155,20 @@ class AbstractFullyConnected(nn.Module):
                 self.layers[i].layer.bias = layer.bias
                 self.layers[i].layer.bias.requires_grad_(False)
 
-    def back_sub_layers(self, layer_index, size_input):
+    def back_sub_layers(self, layer_index, size_input, order = None):
         """ Implements backsubstitution up to the layer layer_index
         """
-        low = self.lows[0]
-        high = self.highs[0]
+        if order == None: order = len(self.layers)-2
+
+        low = self.lows[max(0,layer_index-order-2)]
+        high = self.highs[max(0,layer_index-order-2)]
 
         W_low = torch.eye(size_input, size_input)
         W_high = torch.eye(size_input, size_input)
         bias_high = torch.zeros(size_input)
         bias_low = torch.zeros(size_input)
 
-        for layer in reversed(self.layers[2:layer_index+1]):
+        for layer in reversed(self.layers[max(2,layer_index-order):layer_index+1]):
             if type(layer) == AbstractLinear:
                 W_prime_high = layer.layer.weight
                 b_prime_high = layer.layer.bias
@@ -230,16 +231,44 @@ class AbstractFullyConnected(nn.Module):
             if i in [0,1]: continue # skipping the ones we already computed
             # no need to distinguish btw layers as they have same signature now
             x, low, high = layer(x, low, high)
+
             if type(layer)==AbstractLinear:
                 # note: even though we backsubstitute at each affine,
                 # there is still a dependency on the lamdas
-               low, high = self.back_sub_layers(layer_index=i,size_input=x.size()[0])
+                #print("-" * 20)
+                order = i-2
+                while i-order >= 2:
+                    temp_low, temp_high = self.back_sub_layers(layer_index=i, size_input=x.size()[0], order = order)
+                    #print(low-torch.maximum(low, temp_low))
+                    low = torch.maximum(low, temp_low)
+                    high = torch.minimum(high, temp_high)
+                    order +=2
+
             self.lows+=[low]
             self.highs+=[high]
             self.activations+=[x]
 
 
         return x, low, high
+
+    # def clamp_lamdas(self, new_lamdas):
+    #     """ Clamp the value of the lamdas for all the ReLus
+    #     in the net to the range [0,1]"""
+    #     i = 0
+    #     for layer in self.layers:
+    #         if type(layer) == AbstractRelu:
+    #             new_lamda = new_lamdas[i].clone()
+    #             #new_lamda = layer.lamda.clone()
+    #             #print(new_lamda)
+    #             new_lamda.clamp_(min=0, max=1)
+    #             # we only update the part of the lamda that is crossing
+    #             #lamdas = layer.lamda.clone()
+    #             #lamdas[layer.is_lamda_crossing] = new_lamda
+    #             #print(layer.lamda)
+    #             layer.lamda = torch.nn.Parameter(new_lamda, requires_grad=True)
+    #             #print(layer.lamda)
+    #             #print(layer.lamda)
+    #             i+=1
 
     def clamp_lamdas(self):
         """ Clamp the value of the lamdas for all the ReLus
@@ -251,17 +280,9 @@ class AbstractFullyConnected(nn.Module):
                 new_lamda.clamp_(min=0, max=1)
                 # we automatically cast it back to a list (ready for the forward pass)
                 layer.lamda_list = list(new_lamda.detach().numpy())
+                # we update the initialisation of the updated neurons
+                # in order to keep track of their updates
                 layer.lamda_initialisations[layer.is_neuron_crossing] = new_lamda
-                #print(len(layer.lamda_list))
-                """
-                if i==1:
-                    print(len(layer.lamda_list))
-                    print(sum(layer.is_neuron_crossing))
-                    print(layer.lamda)
-                i+=1
-                """
-                #print(layer.weight_low[layer.is_neuron_crossing,layer.is_neuron_crossing])
-                #print(sum(layer.is_neuron_crossing))
 
     def activate_lamdas(self):
         """ Activate the lamda value """
